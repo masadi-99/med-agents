@@ -97,8 +97,12 @@ class MedAgent_Ranker(dspy.Signature):
 # Enhanced Medical Guideline Ranking Signatures
 class MedAgent_Claimer(dspy.Signature):
     """You are a medical expert.
-    Given a medical question and the correct answer, generate a short list of brief claims and facts that logically build upon each other to reach the correct answer.
-    Each claim should be specific, mechanistically clear, and necessary for the reasoning chain."""
+    Given a medical question and the correct answer, generate claims that consider:
+    1. The specific clinical scenario and timing (acute vs discharge vs long-term)
+    2. All relevant patient factors mentioned in the question
+    3. The exact clinical context being asked about
+    
+    Each claim should be contextually appropriate for the specific question being asked."""
     question: str = dspy.InputField()
     correct_answer: str = dspy.InputField()
     claims: list[str] = dspy.OutputField()
@@ -136,6 +140,14 @@ class MedAgent_ClaimDependency(dspy.Signature):
     claims: list[str] = dspy.InputField()
     dependencies: list[str] = dspy.OutputField()  # Format: "claim_i -> claim_j"
     error_propagation: list[int] = dspy.OutputField()  # Indices of claims that invalidate downstream
+
+class MedAgent_ClaimValidator(dspy.Signature):
+    """You are a medical expert. Analyze if this reasoning chain has any major logical flaws or contradictions that would invalidate the conclusion.
+    Focus on: internal contradictions, impossible physiological sequences, or claims that contradict established medical facts."""
+    question: str = dspy.InputField()
+    claims: list[str] = dspy.InputField()
+    has_fatal_flaw: bool = dspy.OutputField()
+    flaw_description: str = dspy.OutputField()
 
 # Utility functions
 def get_option_letter(options, answer):
@@ -435,6 +447,53 @@ class MedAgent_MG_Ranking_Enhanced(dspy.Module):
             debug_info=debug_info
         )
 
+class MedAgent_MG_Ranking_Fixed(dspy.Module):
+    """Fixed version with fatal flaw detection"""
+    
+    def __init__(self):
+        super().__init__()
+        self.medagent_claimer = dspy.Predict(MedAgent_Claimer)
+        self.medagent_mg_score_list = dspy.ChainOfThought(MedAgent_MG_Score_List)
+        self.claim_validator = dspy.ChainOfThought(MedAgent_ClaimValidator)
+    
+    def forward(self, question, options):
+        scores_dict = {}
+        debug_info = {}
+        
+        for key, option in options.items():
+            claims = self.medagent_claimer(question=question, correct_answer=option).claims
+            individual_scores = self.medagent_mg_score_list(question=question, claims=claims).scores
+            
+            # Validate reasoning chain
+            validation = self.claim_validator(question=question, claims=claims)
+            
+            if not individual_scores:
+                final_score = 0
+            elif validation.has_fatal_flaw:
+                # Heavy penalty for fatal flaws
+                final_score = min(individual_scores) * 0.3
+            else:
+                # Use weighted combination: 60% minimum, 40% average
+                # This prevents averaging away bad claims while still rewarding overall quality
+                min_score = min(individual_scores)
+                avg_score = sum(individual_scores) / len(individual_scores)
+                final_score = min_score * 0.6 + avg_score * 0.4
+            
+            scores_dict[key] = final_score
+            debug_info[key] = {
+                'claims': claims,
+                'individual_scores': individual_scores,
+                'has_fatal_flaw': validation.has_fatal_flaw,
+                'flaw_description': validation.flaw_description,
+                'final_score': final_score
+            }
+        
+        return dspy.Prediction(
+            answer=max(scores_dict, key=scores_dict.get),
+            scores=scores_dict,
+            debug_info=debug_info
+        )
+
 class MedAgent_MG_Ranking_Simple(dspy.Module):
     """Simpler version focusing on key improvements"""
     
@@ -471,6 +530,33 @@ class MedAgent_MG_Ranking_Simple(dspy.Module):
         
         return dspy.Prediction(answer=max(scores_dict, key=scores_dict.get))
 
+class MedAgent_MG_Ranking_Conservative(dspy.Module):
+    """Conservative version with simple but effective scoring"""
+    
+    def __init__(self):
+        super().__init__()
+        self.medagent_claimer = dspy.Predict(MedAgent_Claimer)
+        self.medagent_mg_score_list = dspy.ChainOfThought(MedAgent_MG_Score_List)
+    
+    def forward(self, question, options):
+        scores_dict = {}
+        
+        for key, option in options.items():
+            claims = self.medagent_claimer(question=question, correct_answer=option).claims
+            scores = self.medagent_mg_score_list(question=question, claims=claims).scores
+            
+            if scores:
+                # Simple but effective: 70% minimum score + 30% average
+                # This heavily weights the weakest link while still considering overall quality
+                min_score = min(scores)
+                avg_score = sum(scores) / len(scores)
+                final_score = min_score * 0.7 + avg_score * 0.3
+                scores_dict[key] = final_score
+            else:
+                scores_dict[key] = 0
+        
+        return dspy.Prediction(answer=max(scores_dict, key=scores_dict.get))
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -483,7 +569,9 @@ class GuidelineBasedAgentManager:
             'cot_cot': MedAgent_Guideline_Simple_CoT_CoT(),
             'advanced_planning': AdvancedPlanningAgent(),
             'mg_ranking_enhanced': MedAgent_MG_Ranking_Enhanced(),
-            'mg_ranking_simple': MedAgent_MG_Ranking_Simple()
+            'mg_ranking_fixed': MedAgent_MG_Ranking_Fixed(),
+            'mg_ranking_simple': MedAgent_MG_Ranking_Simple(),
+            'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative()
         }
     
     def get_agent(self, agent_type: str):
@@ -643,7 +731,7 @@ class MedicalAgentEvaluator:
     def compare_agents(self, test_examples: List[dspy.Example], agent_types: List[str] = None):
         """Compare multiple agent types"""
         if agent_types is None:
-            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_simple']
+            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative']
         
         print(f"\n🏆 Comparing {len(agent_types)} agents on {len(test_examples)} questions")
         print("=" * 60)
@@ -719,7 +807,7 @@ def main():
     # Test evaluation framework
     print("\n🧪 Running Agent Comparison:")
     test_examples = evaluator.load_test_data('s_medqa_test.json', 'Cardiology')
-    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_simple'])
+    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative'])
 
 if __name__ == "__main__":
     main() 
