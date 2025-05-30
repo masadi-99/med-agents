@@ -149,6 +149,66 @@ class MedAgent_ClaimValidator(dspy.Signature):
     has_fatal_flaw: bool = dspy.OutputField()
     flaw_description: str = dspy.OutputField()
 
+# New Planning and Guideline-Based Signatures
+class MedAgent_Planner_2(dspy.Signature):
+    """You are a helpful medical expert. Given a question, your job is to lay out a high-level step-by-step plan to answer it. 
+    Each step should be high-level and brief.
+    The goal of the plan is to specifically answer the question.
+    Do not make any assumptions about the right answer. This plan should be general to support any final answer."""
+
+    question: str = dspy.InputField()
+    plan: list[str] = dspy.OutputField()
+
+class MedAgent_Planner_3(dspy.Signature):
+    """You are a helpful medical expert. Given a question, your job is to lay out a high-level step-by-step plan to answer it. 
+    Each step should be high-level and brief.
+    The goal of the plan is to specifically answer the question. Focus on the question's purpose and set up the plan to answer the question.
+    Don't go beyond what the question is asking.
+    Do not make any assumptions about the right answer. This plan should be general to support any final answer."""
+
+    question: str = dspy.InputField()
+    options: dict[str, str] = dspy.InputField()
+    plan: list[str] = dspy.OutputField()
+
+class MedAgent_Plan_Refiner(dspy.Signature):
+    """You are a helpful medical expert. You are given a medical question and a plan to reason through it to reach a final answer. 
+    You are also given the correct final answer, your job is to refine the plan in order to be able to reach the correct final answer.
+    If the plan is currently good enough to reach that answer, return empty.
+    Only do the minimum necessary refining for eacch plan step.
+    For each step, return the refined plan step."""
+
+    question: str = dspy.InputField()
+    plan: list[str] = dspy.InputField()
+    correct_answer: str = dspy.InputField()
+    refined_plan: dict[str, str] = dspy.OutputField()
+
+class MedAgent_ContextualClaim(dspy.Signature):
+    """Generate medical claims with explicit clinical context.
+    Each claim should specify: WHO (patient type), WHEN (clinical timing), WHAT (intervention/finding)"""
+    question: str = dspy.InputField()
+    answer_option: str = dspy.InputField()
+    contextual_claims: list[dict] = dspy.OutputField(desc="List of {'context': str, 'claim': str}")
+
+class MedAgent_GuidelineRetriever(dspy.Signature):
+    """For a given medical claim in context, generate the relevant medical guideline or evidence.
+    Be specific about which guideline, what it says, and any conditions/contexts where it applies."""
+    context: str = dspy.InputField()
+    claim: str = dspy.InputField()
+    guideline_source: str = dspy.OutputField(desc="e.g., 'AHA/ACC 2023 ACS Guidelines'")
+    guideline_text: str = dspy.OutputField(desc="Relevant guideline statement")
+    recommendation_class: str = dspy.OutputField(desc="Class I/IIa/IIb/III")
+    evidence_level: str = dspy.OutputField(desc="Level A/B/C")
+
+class MedAgent_GuidelineAlignment(dspy.Signature):
+    """Evaluate if a medical claim aligns with the retrieved guideline in the given context.
+    Consider: Does the guideline support this claim? Are there contraindications? Context match?"""
+    context: str = dspy.InputField()
+    claim: str = dspy.InputField()
+    guideline_text: str = dspy.InputField()
+    recommendation_class: str = dspy.InputField()
+    alignment_score: int = dspy.OutputField(desc="1-5 score for alignment")
+    reasoning: str = dspy.OutputField(desc="Why this score was given")
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
@@ -557,6 +617,98 @@ class MedAgent_MG_Ranking_Conservative(dspy.Module):
         
         return dspy.Prediction(answer=max(scores_dict, key=scores_dict.get))
 
+class MedAgent_GuidelineBased(dspy.Module):
+    """Guideline-based medical agent with contextual claims and evidence alignment"""
+    
+    def __init__(self):
+        super().__init__()
+        self.contextual_claimer = dspy.Predict(MedAgent_ContextualClaim)
+        self.guideline_retriever = dspy.ChainOfThought(MedAgent_GuidelineRetriever)
+        self.alignment_evaluator = dspy.ChainOfThought(MedAgent_GuidelineAlignment)
+    
+    def forward(self, question, options):
+        results = {}
+        
+        for key, option in options.items():
+            # 1. Generate contextual claims
+            contextual_claims = self.contextual_claimer(
+                question=question, 
+                answer_option=option
+            ).contextual_claims
+            
+            # 2. For each claim, get guideline and evaluate alignment
+            claim_evaluations = []
+            for claim_dict in contextual_claims:
+                context = claim_dict['context']
+                claim = claim_dict['claim']
+                
+                # Retrieve guideline
+                guideline = self.guideline_retriever(context=context, claim=claim)
+                
+                # Evaluate alignment
+                alignment = self.alignment_evaluator(
+                    context=context,
+                    claim=claim,
+                    guideline_text=guideline.guideline_text,
+                    recommendation_class=guideline.recommendation_class
+                )
+                
+                claim_evaluations.append({
+                    'context': context,
+                    'claim': claim,
+                    'guideline_source': guideline.guideline_source,
+                    'guideline_text': guideline.guideline_text,
+                    'recommendation_class': guideline.recommendation_class,
+                    'evidence_level': guideline.evidence_level,
+                    'alignment_score': alignment.alignment_score,
+                    'reasoning': alignment.reasoning
+                })
+            
+            # 3. Calculate overall score
+            overall_score = self._calculate_guideline_score(claim_evaluations)
+            
+            results[key] = {
+                'score': overall_score,
+                'evaluations': claim_evaluations
+            }
+        
+        best_option = max(results, key=lambda k: results[k]['score'])
+        
+        return dspy.Prediction(
+            answer=best_option,
+            results=results
+        )
+    
+    def _calculate_guideline_score(self, evaluations):
+        """Weight by guideline strength and evidence quality"""
+        weighted_scores = []
+        
+        for eval in evaluations:
+            base_score = eval['alignment_score']
+            
+            # Weight by recommendation class
+            class_weights = {
+                'Class I': 1.0,      # Strong recommendation
+                'Class IIa': 0.8,    # Reasonable to do
+                'Class IIb': 0.6,    # May be reasonable
+                'Class III': 0.2     # Not recommended
+            }
+            
+            # Weight by evidence level
+            evidence_weights = {
+                'Level A': 1.0,      # High-quality evidence
+                'Level B': 0.8,      # Moderate-quality evidence  
+                'Level C': 0.6       # Limited evidence
+            }
+            
+            class_weight = class_weights.get(eval['recommendation_class'], 0.5)
+            evidence_weight = evidence_weights.get(eval['evidence_level'], 0.5)
+            
+            weighted_score = base_score * class_weight * evidence_weight
+            weighted_scores.append(weighted_score)
+        
+        return sum(weighted_scores) / len(weighted_scores) if weighted_scores else 0
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -571,7 +723,8 @@ class GuidelineBasedAgentManager:
             'mg_ranking_enhanced': MedAgent_MG_Ranking_Enhanced(),
             'mg_ranking_fixed': MedAgent_MG_Ranking_Fixed(),
             'mg_ranking_simple': MedAgent_MG_Ranking_Simple(),
-            'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative()
+            'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative(),
+            'guideline_based': MedAgent_GuidelineBased()
         }
     
     def get_agent(self, agent_type: str):
@@ -731,7 +884,7 @@ class MedicalAgentEvaluator:
     def compare_agents(self, test_examples: List[dspy.Example], agent_types: List[str] = None):
         """Compare multiple agent types"""
         if agent_types is None:
-            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative']
+            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative', 'guideline_based']
         
         print(f"\n🏆 Comparing {len(agent_types)} agents on {len(test_examples)} questions")
         print("=" * 60)
@@ -807,7 +960,7 @@ def main():
     # Test evaluation framework
     print("\n🧪 Running Agent Comparison:")
     test_examples = evaluator.load_test_data('s_medqa_test.json', 'Cardiology')
-    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative'])
+    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_fixed', 'mg_ranking_simple', 'mg_ranking_conservative', 'guideline_based'])
 
 if __name__ == "__main__":
     main() 
