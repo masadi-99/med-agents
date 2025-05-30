@@ -83,6 +83,79 @@ class SimpleMedicalAgent:
         result = self.predictor(question=question, options=options)
         return result.answer
 
+# Teacher-Student Framework Modules
+class MedAgent_Guideline_Simple_Predict_Predict(dspy.Module):
+    """Teacher uses Predict, Student uses Predict"""
+    def __init__(self):
+        super().__init__()
+        self.teacher = dspy.Predict(MedAgent_Teacher)
+        self.student = dspy.Predict(MedAgent_Student)
+
+    def forward(self, question, options):
+        guidelines = self.teacher(question=question)
+        answer = self.student(question=question, options=options, guidelines=guidelines)
+        return answer
+
+class MedAgent_Guideline_Simple_CoT_Predict(dspy.Module):
+    """Teacher uses ChainOfThought, Student uses Predict"""
+    def __init__(self):
+        super().__init__()
+        self.teacher = dspy.ChainOfThought(MedAgent_Teacher)
+        self.student = dspy.Predict(MedAgent_Student)
+
+    def forward(self, question, options):
+        guidelines = self.teacher(question=question)
+        answer = self.student(question=question, options=options, guidelines=guidelines)
+        return answer
+
+class MedAgent_Guideline_Simple_Predict_CoT(dspy.Module):
+    """Teacher uses Predict, Student uses ChainOfThought"""
+    def __init__(self):
+        super().__init__()
+        self.teacher = dspy.Predict(MedAgent_Teacher)
+        self.student = dspy.ChainOfThought(MedAgent_Student)
+
+    def forward(self, question, options):
+        guidelines = self.teacher(question=question)
+        answer = self.student(question=question, options=options, guidelines=guidelines)
+        return answer
+
+class MedAgent_Guideline_Simple_CoT_CoT(dspy.Module):
+    """Teacher uses ChainOfThought, Student uses ChainOfThought"""
+    def __init__(self):
+        super().__init__()
+        self.teacher = dspy.ChainOfThought(MedAgent_Teacher)
+        self.student = dspy.ChainOfThought(MedAgent_Student)
+
+    def forward(self, question, options):
+        guidelines = self.teacher(question=question)
+        answer = self.student(question=question, options=options, guidelines=guidelines)
+        return answer
+
+# Guideline-based Agent Manager
+class GuidelineBasedAgentManager:
+    """Manager for different teacher-student agent configurations"""
+    
+    def __init__(self):
+        self.agents = {
+            'predict_predict': MedAgent_Guideline_Simple_Predict_Predict(),
+            'cot_predict': MedAgent_Guideline_Simple_CoT_Predict(),
+            'predict_cot': MedAgent_Guideline_Simple_Predict_CoT(),
+            'cot_cot': MedAgent_Guideline_Simple_CoT_CoT()
+        }
+    
+    def get_agent(self, agent_type: str):
+        """Get a specific agent by type"""
+        if agent_type not in self.agents:
+            raise ValueError(f"Unknown agent type: {agent_type}. Available: {list(self.agents.keys())}")
+        return self.agents[agent_type]
+    
+    def answer_question(self, question: str, options: dict, agent_type: str = 'cot_cot') -> str:
+        """Answer a question using specified agent type"""
+        agent = self.get_agent(agent_type)
+        result = agent(question=question, options=options)
+        return result.answer
+
 def main():
     """Main function to demonstrate basic functionality"""
     print("🏥 Unified Medical Agent Application")
@@ -92,8 +165,9 @@ def main():
     lm = configure_dspy()
     print(f"✅ Configured DSPy with model: {lm.model}")
     
-    # Create simple agent
-    agent = SimpleMedicalAgent(use_chain_of_thought=True)
+    # Create agents
+    simple_agent = SimpleMedicalAgent(use_chain_of_thought=True)
+    guideline_manager = GuidelineBasedAgentManager()
     
     # Example medical question
     sample_question = "A 65-year-old patient presents with chest pain and shortness of breath. ECG shows ST elevation in leads II, III, aVF. What is the most likely diagnosis?"
@@ -110,9 +184,20 @@ def main():
     for key, value in sample_options.items():
         print(f"  {key}: {value}")
     
-    print("\n🤖 Agent Answer:")
+    # Test simple agent
+    print("\n🤖 Simple Agent Answer:")
     try:
-        answer = agent.answer_question(sample_question, sample_options)
+        answer = simple_agent.answer_question(sample_question, sample_options)
+        print(f"Selected option: {answer}")
+        if answer in sample_options:
+            print(f"Answer: {sample_options[answer]}")
+    except Exception as e:
+        print(f"Error: {e}")
+    
+    # Test guideline-based agent
+    print("\n🎓 Teacher-Student Agent Answer (CoT-CoT):")
+    try:
+        answer = guideline_manager.answer_question(sample_question, sample_options, 'cot_cot')
         print(f"Selected option: {answer}")
         if answer in sample_options:
             print(f"Answer: {sample_options[answer]}")
