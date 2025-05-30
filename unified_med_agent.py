@@ -94,6 +94,49 @@ class MedAgent_Ranker(dspy.Signature):
     reasonings: dict[str, str] = dspy.InputField()
     ranked_reasonings: list[str] = dspy.OutputField()
 
+# Enhanced Medical Guideline Ranking Signatures
+class MedAgent_Claimer(dspy.Signature):
+    """You are a medical expert.
+    Given a medical question and the correct answer, generate a short list of brief claims and facts that logically build upon each other to reach the correct answer.
+    Each claim should be specific, mechanistically clear, and necessary for the reasoning chain."""
+    question: str = dspy.InputField()
+    correct_answer: str = dspy.InputField()
+    claims: list[str] = dspy.OutputField()
+
+class MedAgent_MG_Score_List(dspy.Signature):
+    """You are a medical expert.
+    Given a list of medical claims in the context of a medical question, return a Likert score (1-5) for each claim showing how aligned that claim is with current medical guidelines.
+    Consider the specific context of the question when scoring."""
+    question: str = dspy.InputField()
+    claims: list[str] = dspy.InputField()
+    scores: list[int] = dspy.OutputField()
+
+class MedAgent_LogicalConsistency(dspy.Signature):
+    """You are a medical expert. 
+    Analyze a list of medical claims for logical consistency and internal contradictions.
+    Return a consistency score (1-5) and identify any contradictory claim pairs."""
+    question: str = dspy.InputField()
+    claims: list[str] = dspy.InputField()
+    consistency_score: int = dspy.OutputField()
+    contradictions: list[str] = dspy.OutputField()
+
+class MedAgent_CriticalPath(dspy.Signature):
+    """You are a medical expert.
+    Given a medical question and reasoning claims, identify which claims are CRITICAL for reaching the conclusion.
+    Return indices of claims that are essential vs. supportive."""
+    question: str = dspy.InputField()
+    claims: list[str] = dspy.InputField()
+    critical_indices: list[int] = dspy.OutputField()
+    supportive_indices: list[int] = dspy.OutputField()
+
+class MedAgent_ClaimDependency(dspy.Signature):
+    """You are a medical expert.
+    Analyze the logical flow between claims. Return dependency relationships and identify if any claim invalidates downstream reasoning."""
+    question: str = dspy.InputField()
+    claims: list[str] = dspy.InputField()
+    dependencies: list[str] = dspy.OutputField()  # Format: "claim_i -> claim_j"
+    error_propagation: list[int] = dspy.OutputField()  # Indices of claims that invalidate downstream
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
@@ -275,6 +318,159 @@ class AdvancedPlanningAgent(dspy.Module):
             # Fallback to first option if ranking fails
             return dspy.Prediction(answer=list(options.keys())[0])
 
+# Enhanced Medical Guideline Ranking Modules
+class MedAgent_MG_Ranking_Enhanced(dspy.Module):
+    """Enhanced medical guideline ranking with claim-based validation"""
+    
+    def __init__(self):
+        super().__init__()
+        self.medagent_claimer = dspy.Predict(MedAgent_Claimer)
+        self.medagent_mg_score_list = dspy.ChainOfThought(MedAgent_MG_Score_List)
+        self.logical_consistency = dspy.ChainOfThought(MedAgent_LogicalConsistency)
+        self.critical_path = dspy.Predict(MedAgent_CriticalPath)
+        self.claim_dependency = dspy.Predict(MedAgent_ClaimDependency)
+    
+    def calculate_enhanced_score(self, question, claims, scores):
+        """Calculate score using multiple validation methods"""
+        
+        # 1. Get logical consistency
+        consistency_result = self.logical_consistency(question=question, claims=claims)
+        consistency_score = consistency_result.consistency_score
+        contradictions = consistency_result.contradictions
+        
+        # 2. Get critical path
+        critical_result = self.critical_path(question=question, claims=claims)
+        critical_indices = critical_result.critical_indices
+        
+        # 3. Get error propagation
+        dependency_result = self.claim_dependency(question=question, claims=claims)
+        error_propagation = dependency_result.error_propagation
+        
+        # 4. Calculate enhanced score
+        enhanced_score = self._compute_final_score(
+            scores, consistency_score, contradictions, 
+            critical_indices, error_propagation
+        )
+        
+        return enhanced_score, {
+            'consistency': consistency_score,
+            'contradictions': contradictions,
+            'critical_indices': critical_indices,
+            'error_propagation': error_propagation
+        }
+    
+    def _compute_final_score(self, scores, consistency_score, contradictions, 
+                           critical_indices, error_propagation):
+        """Multi-modal scoring with error propagation"""
+        
+        # Base score calculation
+        if not scores:
+            return 0
+            
+        # 1. Check for error propagation (fatal errors)
+        if error_propagation:
+            min_error_score = min(scores[i] for i in error_propagation if i < len(scores))
+            if min_error_score <= 2:  # Fatal error threshold
+                return min_error_score * 0.5  # Heavy penalty
+        
+        # 2. Check for contradictions (severe penalty)
+        if contradictions:
+            contradiction_penalty = len(contradictions) * 0.3
+        else:
+            contradiction_penalty = 0
+            
+        # 3. Weighted scoring (critical claims matter more)
+        if critical_indices:
+            critical_scores = [scores[i] for i in critical_indices if i < len(scores)]
+            supportive_scores = [scores[i] for i, score in enumerate(scores) 
+                               if i not in critical_indices]
+            
+            if critical_scores:
+                # Critical claims: 70% weight, use minimum score
+                critical_component = min(critical_scores) * 0.7
+                # Supportive claims: 30% weight, use average
+                supportive_component = (sum(supportive_scores) / len(supportive_scores) if supportive_scores else 5) * 0.3
+                weighted_score = critical_component + supportive_component
+            else:
+                weighted_score = sum(scores) / len(scores)
+        else:
+            # Fallback to minimum score if no critical path identified
+            weighted_score = min(scores) * 0.6 + (sum(scores) / len(scores)) * 0.4
+        
+        # 4. Apply consistency modifier
+        consistency_modifier = (consistency_score - 3) * 0.2  # -0.4 to +0.4
+        
+        # 5. Final score calculation
+        final_score = weighted_score + consistency_modifier - contradiction_penalty
+        
+        return max(0, min(5, final_score))  # Clamp to [0,5]
+    
+    def forward(self, question, options):
+        scores_dict = {}
+        debug_info = {}
+        
+        for key, option in options.items():
+            # Generate claims
+            claims = self.medagent_claimer(question=question, correct_answer=option).claims
+            
+            # Score individual claims
+            scores = self.medagent_mg_score_list(question=question, claims=claims).scores
+            
+            # Calculate enhanced score
+            enhanced_score, debug = self.calculate_enhanced_score(question, claims, scores)
+            
+            scores_dict[key] = enhanced_score
+            debug_info[key] = {
+                'claims': claims,
+                'individual_scores': scores,
+                'enhanced_score': enhanced_score,
+                **debug
+            }
+        
+        best_answer = max(scores_dict, key=scores_dict.get)
+        
+        return dspy.Prediction(
+            answer=best_answer,
+            scores=scores_dict,
+            debug_info=debug_info
+        )
+
+class MedAgent_MG_Ranking_Simple(dspy.Module):
+    """Simpler version focusing on key improvements"""
+    
+    def __init__(self):
+        super().__init__()
+        self.medagent_claimer = dspy.Predict(MedAgent_Claimer)
+        self.medagent_mg_score_list = dspy.ChainOfThought(MedAgent_MG_Score_List)
+        self.logical_consistency = dspy.ChainOfThought(MedAgent_LogicalConsistency)
+    
+    def forward(self, question, options):
+        scores_dict = {}
+        
+        for key, option in options.items():
+            claims = self.medagent_claimer(question=question, correct_answer=option).claims
+            scores = self.medagent_mg_score_list(question=question, claims=claims).scores
+            
+            # Check logical consistency
+            consistency_result = self.logical_consistency(question=question, claims=claims)
+            consistency_score = consistency_result.consistency_score
+            
+            # Enhanced scoring: minimum score + consistency bonus/penalty
+            if scores:
+                base_score = min(scores)  # Use minimum instead of average
+                consistency_modifier = (consistency_score - 3) * 0.3
+                final_score = base_score + consistency_modifier
+                
+                # Heavy penalty for contradictions
+                if consistency_result.contradictions:
+                    final_score *= 0.7
+                    
+                scores_dict[key] = max(0, min(5, final_score))
+            else:
+                scores_dict[key] = 0
+        
+        return dspy.Prediction(answer=max(scores_dict, key=scores_dict.get))
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -285,7 +481,9 @@ class GuidelineBasedAgentManager:
             'cot_predict': MedAgent_Guideline_Simple_CoT_Predict(),
             'predict_cot': MedAgent_Guideline_Simple_Predict_CoT(),
             'cot_cot': MedAgent_Guideline_Simple_CoT_CoT(),
-            'advanced_planning': AdvancedPlanningAgent()
+            'advanced_planning': AdvancedPlanningAgent(),
+            'mg_ranking_enhanced': MedAgent_MG_Ranking_Enhanced(),
+            'mg_ranking_simple': MedAgent_MG_Ranking_Simple()
         }
     
     def get_agent(self, agent_type: str):
@@ -445,7 +643,7 @@ class MedicalAgentEvaluator:
     def compare_agents(self, test_examples: List[dspy.Example], agent_types: List[str] = None):
         """Compare multiple agent types"""
         if agent_types is None:
-            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot']
+            agent_types = ['predict_predict', 'cot_predict', 'predict_cot', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_simple']
         
         print(f"\n🏆 Comparing {len(agent_types)} agents on {len(test_examples)} questions")
         print("=" * 60)
@@ -521,7 +719,7 @@ def main():
     # Test evaluation framework
     print("\n🧪 Running Agent Comparison:")
     test_examples = evaluator.load_test_data('s_medqa_test.json', 'Cardiology')
-    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot'])
+    comparison_results = evaluator.compare_agents(test_examples, ['cot_predict', 'cot_cot', 'mg_ranking_enhanced', 'mg_ranking_simple'])
 
 if __name__ == "__main__":
     main() 
