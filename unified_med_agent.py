@@ -248,6 +248,17 @@ class MedicalReasoner(dspy.Signature):
         desc="Primary diagnosis and immediate recommendations"
     )
 
+class ClaimDecomposer(dspy.Signature):
+    """Decomposes medical reasoning into atomic, verifiable claims."""
+    
+    reasoning_text: str = dspy.InputField(
+        desc="Medical reasoning text to decompose"
+    )
+    
+    claims: List[Dict[str, str]] = dspy.OutputField(
+        desc="List of atomic claims with format: {claim_id, type, statement, confidence, source_type, depends_on}"
+    )
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
@@ -783,6 +794,64 @@ class SimpleMedicalReasoningAgent(dspy.Module):
         
         return best_match if best_match else list(options.keys())[0]
 
+# Claim Decomposing Agent
+class ClaimDecomposingAgent(dspy.Module):
+    """Agent that decomposes medical reasoning into verifiable claims"""
+    
+    def __init__(self):
+        super().__init__()
+        self.reasoner = dspy.Predict(MedicalReasoner)
+        self.decomposer = dspy.Predict(ClaimDecomposer)
+    
+    def forward(self, patient_presentation: str):
+        """Analyze patient and decompose reasoning into claims"""
+        # Step 1: Generate medical reasoning
+        reasoning_result = self.reasoner(patient_presentation=patient_presentation)
+        
+        # Step 2: Decompose each reasoning step into claims
+        all_claims = []
+        for step in reasoning_result.reasoning_steps:
+            decomposed = self.decomposer(reasoning_text=step)
+            all_claims.extend(decomposed.claims)
+        
+        return {
+            'reasoning': reasoning_result,
+            'claims': all_claims
+        }
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Adapt to standard interface using claim-based reasoning"""
+        result = self.forward(question)
+        
+        # Score options based on claim alignment
+        option_scores = {}
+        for key, option in options.items():
+            score = 0
+            option_lower = option.lower()
+            
+            # Score based on claims that mention concepts in the option
+            for claim in result['claims']:
+                if isinstance(claim, dict) and 'statement' in claim:
+                    claim_words = set(claim['statement'].lower().split())
+                    option_words = set(option_lower.split())
+                    overlap = len(claim_words.intersection(option_words))
+                    
+                    # Weight by confidence if available
+                    confidence_weight = 1.0
+                    if 'confidence' in claim:
+                        if claim['confidence'].upper() == 'HIGH':
+                            confidence_weight = 1.5
+                        elif claim['confidence'].upper() == 'LOW':
+                            confidence_weight = 0.5
+                    
+                    score += overlap * confidence_weight
+            
+            option_scores[key] = score
+        
+        # Return option with highest score
+        best_option = max(option_scores, key=option_scores.get)
+        return best_option
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -799,7 +868,8 @@ class GuidelineBasedAgentManager:
             'mg_ranking_simple': MedAgent_MG_Ranking_Simple(),
             'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative(),
             'guideline_based': MedAgent_GuidelineBased(),
-            'simple_medical_reasoning': SimpleMedicalReasoningAgent()
+            'simple_medical_reasoning': SimpleMedicalReasoningAgent(),
+            'claim_decomposing': ClaimDecomposingAgent()
         }
     
     def get_agent(self, agent_type: str):
