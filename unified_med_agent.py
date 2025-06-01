@@ -302,6 +302,22 @@ class ReasoningSynthesizer(dspy.Signature):
         desc="Important uncertainties or limitations in the assessment"
     )
 
+class UncertaintyQuantifier(dspy.Signature):
+    """Quantifies and communicates uncertainty in medical claims."""
+    
+    claim: Dict[str, str] = dspy.InputField()
+    verification_result: Dict[str, str] = dspy.InputField()
+    
+    uncertainty_level: float = dspy.OutputField(
+        desc="Numerical uncertainty 0.0 (certain) to 1.0 (highly uncertain)"
+    )
+    uncertainty_explanation: str = dspy.OutputField(
+        desc="Human-readable explanation of what creates the uncertainty"
+    )
+    additional_data_needed: List[str] = dspy.OutputField(
+        desc="What additional information would reduce uncertainty"
+    )
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
