@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 # Data structures for claims
 @dataclass
@@ -317,6 +318,409 @@ class UncertaintyQuantifier(dspy.Signature):
     additional_data_needed: List[str] = dspy.OutputField(
         desc="What additional information would reduce uncertainty"
     )
+
+# Medical MCQ Verifiable Reasoning System
+from typing import Optional
+from enum import Enum
+
+# ============= Constants and Enums =============
+# IMPORTANT: These constants ensure consistent output format across all model responses
+# Without normalization, the model might output "verified", "Verified.", "VERIFIED!", etc.
+# which makes comparison and downstream processing difficult.
+
+class VerificationStatus(Enum):
+    VERIFIED = "VERIFIED"
+    PARTIALLY_VERIFIED = "PARTIALLY_VERIFIED" 
+    UNVERIFIED = "UNVERIFIED"
+    CONTRADICTED = "CONTRADICTED"
+
+class EvidenceQuality(Enum):
+    A = "A"  # Guidelines/Systematic Review
+    B = "B"  # RCT/Large Studies
+    C = "C"  # Observational Studies
+    D = "D"  # Expert Opinion
+    F = "F"  # Cannot Verify
+
+class ConfidenceLevel(Enum):
+    HIGH = "HIGH"
+    MODERATE = "MODERATE"
+    LOW = "LOW"
+
+# Valid values for constraints
+VALID_VERIFICATION_STATUS = ["VERIFIED", "PARTIALLY_VERIFIED", "UNVERIFIED", "CONTRADICTED"]
+VALID_EVIDENCE_QUALITY = ["A", "B", "C", "D", "F"]
+VALID_CONFIDENCE_LEVELS = ["HIGH", "MODERATE", "LOW"]
+
+# ============= Helper Functions =============
+
+def normalize_verification_status(status: str) -> str:
+    """Normalize verification status to ensure consistent format."""
+    if not status:
+        return "UNVERIFIED"
+    
+    # Remove any extra characters and normalize
+    normalized = status.upper().strip().rstrip('.').rstrip('!')
+    
+    # Map common variations to standard values
+    status_map = {
+        'VERIFIED': 'VERIFIED',
+        'VERIFY': 'VERIFIED',
+        'PARTIAL': 'PARTIALLY_VERIFIED',
+        'PARTIALLY': 'PARTIALLY_VERIFIED',
+        'PARTIALLY_VERIFIED': 'PARTIALLY_VERIFIED',
+        'PARTIAL_VERIFIED': 'PARTIALLY_VERIFIED',
+        'UNVERIFIED': 'UNVERIFIED',
+        'NOT_VERIFIED': 'UNVERIFIED',
+        'CANNOT_VERIFY': 'UNVERIFIED',
+        'CONTRADICTED': 'CONTRADICTED',
+        'CONTRADICT': 'CONTRADICTED',
+        'CONTRADICTS': 'CONTRADICTED',
+        'FALSE': 'CONTRADICTED'
+    }
+    
+    return status_map.get(normalized, 'UNVERIFIED')
+
+def normalize_evidence_quality(quality: str) -> str:
+    """Normalize evidence quality to ensure consistent format."""
+    if not quality:
+        return "F"
+    
+    normalized = quality.upper().strip()
+    
+    # Ensure it's one of the valid values
+    if normalized in VALID_EVIDENCE_QUALITY:
+        return normalized
+    
+    # Handle common variations
+    if normalized in ['HIGH', 'EXCELLENT']:
+        return 'A'
+    elif normalized in ['GOOD', 'MODERATE']:
+        return 'B'
+    elif normalized in ['LOW', 'WEAK']:
+        return 'C'
+    elif normalized in ['EXPERT', 'OPINION']:
+        return 'D'
+    else:
+        return 'F'
+
+def normalize_confidence_level(confidence: str) -> str:
+    """Normalize confidence level to ensure consistent format."""
+    if not confidence:
+        return "MODERATE"
+    
+    normalized = confidence.upper().strip()
+    
+    # Map variations to standard values
+    confidence_map = {
+        'HIGH': 'HIGH',
+        'VERY_HIGH': 'HIGH',
+        'STRONG': 'HIGH',
+        'MODERATE': 'MODERATE',
+        'MEDIUM': 'MODERATE',
+        'LOW': 'LOW',
+        'WEAK': 'LOW',
+        'VERY_LOW': 'LOW'
+    }
+    
+    return confidence_map.get(normalized, 'MODERATE')
+
+def parse_contradicts_options(contradicts_str: str) -> List[str]:
+    """Convert comma-separated string to list of options."""
+    if not contradicts_str or contradicts_str.lower() == 'none':
+        return []
+    return [opt.strip() for opt in contradicts_str.split(',') if opt.strip()]
+
+def format_contradicts_options(options_list: List[str]) -> str:
+    """Convert list of options to comma-separated string."""
+    if not options_list:
+        return "none"
+    return ",".join(options_list)
+
+# ============= DSPy Signatures for MCQ =============
+
+class MedicalMCQReasoner(dspy.Signature):
+    """Analyzes medical MCQ with step-by-step reasoning."""
+    
+    question: str = dspy.InputField(
+        desc="The medical question stem including patient presentation"
+    )
+    options: Dict[str, str] = dspy.InputField(
+        desc="Answer options as dictionary {A: text, B: text, ...}"
+    )
+    
+    initial_analysis: str = dspy.OutputField(
+        desc="Initial understanding of what the question is asking"
+    )
+    key_findings: List[str] = dspy.OutputField(
+        desc="Important clinical findings from the question stem"
+    )
+    reasoning_steps: List[str] = dspy.OutputField(
+        desc="Step-by-step reasoning through the problem"
+    )
+    option_evaluation: Dict[str, str] = dspy.OutputField(
+        desc="Evaluation of each option with reasoning"
+    )
+
+class MCQClaimDecomposer(dspy.Signature):
+    """Decomposes MCQ reasoning into verifiable claims."""
+    
+    question: str = dspy.InputField()
+    options: Dict[str, str] = dspy.InputField()
+    reasoning_steps: List[str] = dspy.InputField()
+    option_evaluation: Dict[str, str] = dspy.InputField()
+    
+    claims: List[Dict] = dspy.OutputField(
+        desc="List of claims with format: {claim_id: str, type: str, statement: str, confidence: str, supports_option: str, contradicts_options: str (comma-separated)}"
+    )
+
+class MCQClaimVerifier(dspy.Signature):
+    """Verifies claims specifically for MCQ context."""
+    
+    claim: Dict[str, str] = dspy.InputField()
+    question_context: str = dspy.InputField()
+    relevant_options: Dict[str, str] = dspy.InputField()
+    
+    verification_status: str = dspy.OutputField()
+    evidence_quality: str = dspy.OutputField()
+    source_citation: str = dspy.OutputField()
+    impact_on_options: Dict[str, str] = dspy.OutputField(
+        desc="How verification affects each option's likelihood"
+    )
+
+class MCQAnswerSelector(dspy.Signature):
+    """Selects final answer based on verified claims."""
+    
+    question: str = dspy.InputField()
+    options: Dict[str, str] = dspy.InputField()
+    verified_claims: List[Dict[str, str]] = dspy.InputField()
+    option_evaluation: Dict[str, str] = dspy.InputField()
+    
+    answer: str = dspy.OutputField(
+        desc="The selected answer key (A, B, C, D, or E)"
+    )
+    confidence_score: float = dspy.OutputField(
+        desc="Confidence in the answer (0.0 to 1.0)"
+    )
+    answer_justification: str = dspy.OutputField(
+        desc="Final justification for the selected answer"
+    )
+
+class MCQReasoningSynthesizer(dspy.Signature):
+    """Creates verifiable explanation for MCQ answer."""
+    
+    question: str = dspy.InputField()
+    options: Dict[str, str] = dspy.InputField()
+    selected_answer: str = dspy.InputField()
+    verified_claims: List[Dict[str, str]] = dspy.InputField()
+    
+    verified_explanation: str = dspy.OutputField(
+        desc="Complete explanation with confidence indicators"
+    )
+    supporting_evidence: List[str] = dspy.OutputField(
+        desc="Key verified facts supporting the answer"
+    )
+    eliminated_options: Dict[str, str] = dspy.OutputField(
+        desc="Why each incorrect option was eliminated"
+    )
+
+# Medical MCQ Verifiable Reasoning Modules
+
+class VerifiableMedicalMCQSolver(dspy.Module):
+    """Complete pipeline for verifiable medical MCQ answering."""
+    
+    def __init__(self):
+        super().__init__()
+        self.reasoner = dspy.Predict(MedicalMCQReasoner)
+        self.decomposer = dspy.Predict(MCQClaimDecomposer)
+        self.verifier = dspy.Predict(MCQClaimVerifier)
+        self.selector = dspy.Predict(MCQAnswerSelector)
+        self.synthesizer = dspy.Predict(MCQReasoningSynthesizer)
+    
+    def forward(self, question: str, options: Dict[str, str]) -> Dict:
+        # Step 1: Initial reasoning
+        reasoning = self.reasoner(question=question, options=options)
+        
+        # Step 2: Decompose into claims
+        claims = self.decomposer(
+            question=question,
+            options=options,
+            reasoning_steps=reasoning.reasoning_steps,
+            option_evaluation=reasoning.option_evaluation
+        )
+        
+        # Step 3: Verify each claim
+        verified_claims = []
+        for claim in claims.claims:
+            # Parse contradicts_options if it's a string
+            if isinstance(claim.get('contradicts_options'), str):
+                claim['contradicts_options_list'] = [opt.strip() for opt in claim['contradicts_options'].split(',') if opt.strip()]
+            else:
+                claim['contradicts_options_list'] = []
+            
+            # Normalize confidence level in the claim
+            if 'confidence' in claim:
+                claim['confidence'] = normalize_confidence_level(claim['confidence'])
+                
+            verification = self.verifier(
+                claim=claim,
+                question_context=question,
+                relevant_options=options
+            )
+            
+            # Normalize verification outputs
+            normalized_status = normalize_verification_status(verification.verification_status)
+            normalized_quality = normalize_evidence_quality(verification.evidence_quality)
+            
+            verified_claim = {
+                **claim,
+                'verification_status': normalized_status,
+                'evidence_quality': normalized_quality,
+                'source': verification.source_citation,
+                'impact_on_options': verification.impact_on_options
+            }
+            verified_claims.append(verified_claim)
+        
+        # Step 4: Select answer based on verified claims
+        answer_selection = self.selector(
+            question=question,
+            options=options,
+            verified_claims=verified_claims,
+            option_evaluation=reasoning.option_evaluation
+        )
+        
+        # Step 5: Synthesize verifiable explanation
+        synthesis = self.synthesizer(
+            question=question,
+            options=options,
+            selected_answer=answer_selection.answer,
+            verified_claims=verified_claims
+        )
+        
+        return {
+            'answer': answer_selection.answer,
+            'confidence': answer_selection.confidence_score,
+            'initial_reasoning': reasoning,
+            'claims': claims.claims,
+            'verified_claims': verified_claims,
+            'answer_justification': answer_selection.answer_justification,
+            'verified_explanation': synthesis.verified_explanation,
+            'supporting_evidence': synthesis.supporting_evidence,
+            'eliminated_options': synthesis.eliminated_options
+        }
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Adapt to standard interface for compatibility"""
+        result = self.forward(question, options)
+        return result['answer']
+
+class DifferentialDiagnosisModule(dspy.Module):
+    """Specialized module for differential diagnosis questions."""
+    
+    def __init__(self):
+        super().__init__()
+        self.analyzer = dspy.Predict(self.ClinicalAnalyzer)
+        self.ranker = dspy.Predict(self.DiagnosisRanker)
+    
+    class ClinicalAnalyzer(dspy.Signature):
+        """Analyzes clinical presentation systematically."""
+        
+        question: str = dspy.InputField()
+        
+        chief_complaint: str = dspy.OutputField()
+        key_symptoms: List[str] = dspy.OutputField()
+        relevant_history: List[str] = dspy.OutputField()
+        physical_findings: List[str] = dspy.OutputField()
+        lab_results: List[str] = dspy.OutputField()
+    
+    class DiagnosisRanker(dspy.Signature):
+        """Ranks diagnoses based on clinical findings."""
+        
+        clinical_findings: Dict[str, List[str]] = dspy.InputField()
+        possible_diagnoses: Dict[str, str] = dspy.InputField()
+        
+        diagnosis_scores: Dict[str, float] = dspy.OutputField(
+            desc="Probability scores for each diagnosis option"
+        )
+        supporting_findings: Dict[str, List[str]] = dspy.OutputField()
+        contradicting_findings: Dict[str, List[str]] = dspy.OutputField()
+    
+    def forward(self, question: str, options: Dict[str, str]) -> Dict:
+        # Analyze clinical presentation
+        clinical = self.analyzer(question=question)
+        
+        clinical_findings = {
+            'chief_complaint': clinical.chief_complaint,
+            'symptoms': clinical.key_symptoms,
+            'history': clinical.relevant_history,
+            'physical': clinical.physical_findings,
+            'labs': clinical.lab_results
+        }
+        
+        # Rank diagnoses
+        ranking = self.ranker(
+            clinical_findings=clinical_findings,
+            possible_diagnoses=options
+        )
+        
+        return ranking
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Adapt to standard interface"""
+        result = self.forward(question, options)
+        # Return option with highest diagnosis score
+        best_option = max(result.diagnosis_scores, key=result.diagnosis_scores.get)
+        return best_option
+
+class PharmacologyModule(dspy.Module):
+    """Specialized module for pharmacology questions."""
+    
+    def __init__(self):
+        super().__init__()
+        self.drug_analyzer = dspy.Predict(self.DrugAnalyzer)
+        self.interaction_checker = dspy.Predict(self.InteractionChecker)
+    
+    class DrugAnalyzer(dspy.Signature):
+        """Analyzes drug-related questions."""
+        
+        question: str = dspy.InputField()
+        options: Dict[str, str] = dspy.InputField()
+        
+        drug_class: str = dspy.OutputField()
+        mechanism_of_action: str = dspy.OutputField()
+        clinical_context: str = dspy.OutputField()
+        relevant_side_effects: List[str] = dspy.OutputField()
+        contraindications: List[str] = dspy.OutputField()
+    
+    class InteractionChecker(dspy.Signature):
+        """Checks drug interactions and contraindications."""
+        
+        patient_context: str = dspy.InputField()
+        drug_options: Dict[str, str] = dspy.InputField()
+        
+        interaction_risks: Dict[str, List[str]] = dspy.OutputField()
+        contraindication_flags: Dict[str, List[str]] = dspy.OutputField()
+        safest_option: str = dspy.OutputField()
+    
+    def forward(self, question: str, options: Dict[str, str]) -> Dict:
+        # Analyze drug aspects
+        drug_analysis = self.drug_analyzer(question=question, options=options)
+        
+        # Check interactions
+        interactions = self.interaction_checker(
+            patient_context=question,
+            drug_options=options
+        )
+        
+        return {
+            'drug_analysis': drug_analysis,
+            'interactions': interactions,
+            'recommended_choice': interactions.safest_option
+        }
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Adapt to standard interface"""
+        result = self.forward(question, options)
+        return result['recommended_choice']
 
 # Utility functions
 def get_option_letter(options, answer):
@@ -1125,7 +1529,10 @@ class GuidelineBasedAgentManager:
             'simple_medical_reasoning': SimpleMedicalReasoningAgent(),
             'claim_decomposing': ClaimDecomposingAgent(),
             'claim_verifying': ClaimVerifyingAgent(),
-            'verifiable_medical_reasoning': VerifiableMedicalReasoner()
+            'verifiable_medical_reasoning': VerifiableMedicalReasoner(),
+            'verifiable_medical_mcq_solver': VerifiableMedicalMCQSolver(),
+            'differential_diagnosis': DifferentialDiagnosisModule(),
+            'pharmacology': PharmacologyModule()
         }
     
     def get_agent(self, agent_type: str):
