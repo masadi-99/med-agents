@@ -282,6 +282,26 @@ class ClaimVerifier(dspy.Signature):
         desc="Additional notes about verification or contradicting evidence"
     )
 
+class ReasoningSynthesizer(dspy.Signature):
+    """Synthesizes verified claims into trustworthy medical assessment."""
+    
+    original_reasoning: List[str] = dspy.InputField(
+        desc="Original reasoning steps"
+    )
+    verified_claims: List[Dict[str, str]] = dspy.InputField(
+        desc="Claims with verification results"
+    )
+    
+    verified_assessment: str = dspy.OutputField(
+        desc="Synthesized assessment with confidence indicators and evidence levels"
+    )
+    confidence_summary: Dict[str, float] = dspy.OutputField(
+        desc="Overall confidence scores for different aspects of the assessment"
+    )
+    key_uncertainties: List[str] = dspy.OutputField(
+        desc="Important uncertainties or limitations in the assessment"
+    )
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
@@ -967,6 +987,109 @@ class ClaimVerifyingAgent(dspy.Module):
         best_option = max(option_scores, key=option_scores.get)
         return best_option
 
+# Complete Verifiable Medical Reasoning Agent
+class VerifiableMedicalReasoner(dspy.Module):
+    """Main module that orchestrates the complete verifiable reasoning pipeline."""
+    
+    def __init__(self):
+        super().__init__()
+        self.reasoner = dspy.Predict(MedicalReasoner)
+        self.decomposer = dspy.Predict(ClaimDecomposer)
+        self.verifier = dspy.Predict(ClaimVerifier)
+        self.synthesizer = dspy.Predict(ReasoningSynthesizer)
+    
+    def forward(self, patient_presentation: str) -> Dict:
+        # Step 1: Generate initial medical reasoning
+        reasoning_output = self.reasoner(patient_presentation=patient_presentation)
+        
+        # Step 2: Decompose each reasoning step into claims
+        all_claims = []
+        for step in reasoning_output.reasoning_steps:
+            decomposed = self.decomposer(reasoning_text=step)
+            all_claims.extend(decomposed.claims)
+        
+        # Step 3: Verify each claim
+        verified_claims = []
+        for claim in all_claims:
+            verification = self.verifier(
+                claim=claim,
+                medical_context=patient_presentation
+            )
+            verified_claim = {
+                **claim,
+                'verification_status': verification.verification_status,
+                'evidence_quality': verification.evidence_quality,
+                'source_citation': verification.source_citation,
+                'verification_notes': verification.verification_notes
+            }
+            verified_claims.append(verified_claim)
+        
+        # Step 4: Synthesize verified reasoning
+        synthesis = self.synthesizer(
+            original_reasoning=reasoning_output.reasoning_steps,
+            verified_claims=verified_claims
+        )
+        
+        return {
+            'original_reasoning': reasoning_output,
+            'decomposed_claims': all_claims,
+            'verified_claims': verified_claims,
+            'synthesis': synthesis
+        }
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Answer using complete verifiable reasoning pipeline"""
+        result = self.forward(question)
+        
+        option_scores = {}
+        for key, option in options.items():
+            score = 0
+            option_lower = option.lower()
+            
+            # Score based on synthesized assessment
+            synthesis_words = set(result['synthesis'].verified_assessment.lower().split())
+            option_words = set(option_lower.split())
+            synthesis_overlap = len(synthesis_words.intersection(option_words))
+            
+            # Score based on verified claims with sophisticated weighting
+            claim_score = 0
+            for verified_claim in result['verified_claims']:
+                if isinstance(verified_claim, dict) and 'statement' in verified_claim:
+                    claim_words = set(verified_claim['statement'].lower().split())
+                    overlap = len(claim_words.intersection(option_words))
+                    
+                    if overlap > 0:
+                        # Multi-factor weighting
+                        status_weight = {
+                            'VERIFIED': 3.0,
+                            'PARTIALLY_VERIFIED': 1.5,
+                            'UNVERIFIED': 0.2,
+                            'CONTRADICTED': -2.0
+                        }.get(verified_claim.get('verification_status', 'UNVERIFIED'), 0.2)
+                        
+                        evidence_weight = {
+                            'A': 2.5, 'B': 2.0, 'C': 1.5, 'D': 1.0, 'F': 0.1
+                        }.get(verified_claim.get('evidence_quality', 'F'), 0.1)
+                        
+                        confidence_weight = {
+                            'HIGH': 2.0, 'MODERATE': 1.0, 'LOW': 0.5
+                        }.get(verified_claim.get('confidence', 'MODERATE'), 1.0)
+                        
+                        claim_score += overlap * status_weight * evidence_weight * confidence_weight
+            
+            # Combine synthesis and claim scores
+            total_score = synthesis_overlap * 2.0 + claim_score
+            
+            # Apply confidence penalty if synthesis has low confidence
+            if hasattr(result['synthesis'], 'confidence_summary'):
+                avg_confidence = sum(result['synthesis'].confidence_summary.values()) / len(result['synthesis'].confidence_summary) if result['synthesis'].confidence_summary else 0.5
+                total_score *= (0.5 + avg_confidence)  # Scale by confidence
+            
+            option_scores[key] = total_score
+        
+        best_option = max(option_scores, key=option_scores.get)
+        return best_option
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -985,7 +1108,8 @@ class GuidelineBasedAgentManager:
             'guideline_based': MedAgent_GuidelineBased(),
             'simple_medical_reasoning': SimpleMedicalReasoningAgent(),
             'claim_decomposing': ClaimDecomposingAgent(),
-            'claim_verifying': ClaimVerifyingAgent()
+            'claim_verifying': ClaimVerifyingAgent(),
+            'verifiable_medical_reasoning': VerifiableMedicalReasoner()
         }
     
     def get_agent(self, agent_type: str):
