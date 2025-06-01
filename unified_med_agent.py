@@ -259,6 +259,29 @@ class ClaimDecomposer(dspy.Signature):
         desc="List of atomic claims with format: {claim_id, type, statement, confidence, source_type, depends_on}"
     )
 
+class ClaimVerifier(dspy.Signature):
+    """Verifies individual medical claims against medical literature."""
+    
+    claim: Dict[str, str] = dspy.InputField(
+        desc="Medical claim to verify"
+    )
+    medical_context: str = dspy.InputField(
+        desc="Additional context about the patient case"
+    )
+    
+    verification_status: str = dspy.OutputField(
+        desc="VERIFIED, PARTIALLY_VERIFIED, UNVERIFIED, or CONTRADICTED"
+    )
+    evidence_quality: str = dspy.OutputField(
+        desc="Evidence quality rating: A (Guidelines/Systematic Review), B (RCT), C (Observational), D (Expert Opinion), F (Cannot Verify)"
+    )
+    source_citation: str = dspy.OutputField(
+        desc="Specific citation for verification"
+    )
+    verification_notes: str = dspy.OutputField(
+        desc="Additional notes about verification or contradicting evidence"
+    )
+
 # Utility functions
 def get_option_letter(options, answer):
     """Convert answer to option letter"""
@@ -852,6 +875,98 @@ class ClaimDecomposingAgent(dspy.Module):
         best_option = max(option_scores, key=option_scores.get)
         return best_option
 
+# Claim Verifying Agent
+class ClaimVerifyingAgent(dspy.Module):
+    """Agent that verifies medical claims against literature"""
+    
+    def __init__(self):
+        super().__init__()
+        self.reasoner = dspy.Predict(MedicalReasoner)
+        self.decomposer = dspy.Predict(ClaimDecomposer)
+        self.verifier = dspy.Predict(ClaimVerifier)
+    
+    def forward(self, patient_presentation: str):
+        """Analyze patient, decompose reasoning, and verify claims"""
+        # Step 1: Generate medical reasoning
+        reasoning_result = self.reasoner(patient_presentation=patient_presentation)
+        
+        # Step 2: Decompose reasoning into claims
+        all_claims = []
+        for step in reasoning_result.reasoning_steps:
+            decomposed = self.decomposer(reasoning_text=step)
+            all_claims.extend(decomposed.claims)
+        
+        # Step 3: Verify each claim
+        verified_claims = []
+        for claim in all_claims:
+            verification = self.verifier(
+                claim=claim,
+                medical_context=patient_presentation
+            )
+            verified_claim = {
+                **claim,
+                'verification_status': verification.verification_status,
+                'evidence_quality': verification.evidence_quality,
+                'source_citation': verification.source_citation,
+                'verification_notes': verification.verification_notes
+            }
+            verified_claims.append(verified_claim)
+        
+        return {
+            'reasoning': reasoning_result,
+            'claims': all_claims,
+            'verified_claims': verified_claims
+        }
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Answer using verified claims with evidence quality weighting"""
+        result = self.forward(question)
+        
+        option_scores = {}
+        for key, option in options.items():
+            score = 0
+            option_lower = option.lower()
+            
+            for verified_claim in result['verified_claims']:
+                if isinstance(verified_claim, dict) and 'statement' in verified_claim:
+                    # Calculate word overlap
+                    claim_words = set(verified_claim['statement'].lower().split())
+                    option_words = set(option_lower.split())
+                    overlap = len(claim_words.intersection(option_words))
+                    
+                    if overlap > 0:
+                        # Weight by verification status
+                        status_weight = {
+                            'VERIFIED': 2.0,
+                            'PARTIALLY_VERIFIED': 1.0,
+                            'UNVERIFIED': 0.3,
+                            'CONTRADICTED': -1.0
+                        }.get(verified_claim.get('verification_status', 'UNVERIFIED'), 0.3)
+                        
+                        # Weight by evidence quality
+                        evidence_weight = {
+                            'A': 2.0,  # Guidelines/Systematic Review
+                            'B': 1.5,  # RCT
+                            'C': 1.0,  # Observational
+                            'D': 0.5,  # Expert Opinion
+                            'F': 0.1   # Cannot Verify
+                        }.get(verified_claim.get('evidence_quality', 'F'), 0.1)
+                        
+                        # Weight by original confidence
+                        confidence_weight = {
+                            'HIGH': 1.5,
+                            'MODERATE': 1.0,
+                            'LOW': 0.5
+                        }.get(verified_claim.get('confidence', 'MODERATE'), 1.0)
+                        
+                        score += overlap * status_weight * evidence_weight * confidence_weight
+            
+            option_scores[key] = score
+        
+        # Return option with highest score
+        best_option = max(option_scores, key=option_scores.get)
+        return best_option
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -869,7 +984,8 @@ class GuidelineBasedAgentManager:
             'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative(),
             'guideline_based': MedAgent_GuidelineBased(),
             'simple_medical_reasoning': SimpleMedicalReasoningAgent(),
-            'claim_decomposing': ClaimDecomposingAgent()
+            'claim_decomposing': ClaimDecomposingAgent(),
+            'claim_verifying': ClaimVerifyingAgent()
         }
     
     def get_agent(self, agent_type: str):
