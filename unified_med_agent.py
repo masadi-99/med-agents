@@ -7,6 +7,27 @@ import asyncio
 import aiohttp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from typing import List, Dict, Tuple
+from dataclasses import dataclass
+
+# Data structures for claims
+@dataclass
+class MedicalClaim:
+    claim_id: str
+    claim_type: str  # ANATOMICAL_FACT, DIAGNOSTIC_CRITERIA, etc.
+    statement: str
+    confidence: str  # HIGH, MODERATE, LOW
+    verification_source: str
+    depends_on: List[str]
+
+@dataclass
+class VerificationResult:
+    claim_id: str
+    status: str  # VERIFIED, PARTIALLY_VERIFIED, UNVERIFIED, CONTRADICTED
+    evidence_quality: str  # A, B, C, D, F
+    source: str
+    date: str
+    notes: str
 
 # Load environment variables
 load_dotenv()
@@ -208,6 +229,24 @@ class MedAgent_GuidelineAlignment(dspy.Signature):
     recommendation_class: str = dspy.InputField()
     alignment_score: int = dspy.OutputField(desc="1-5 score for alignment")
     reasoning: str = dspy.OutputField(desc="Why this score was given")
+
+# Verifiable Medical Reasoning Signatures
+class MedicalReasoner(dspy.Signature):
+    """Primary medical reasoning agent that provides step-by-step analysis."""
+    
+    patient_presentation: str = dspy.InputField(
+        desc="Patient symptoms, history, and vital signs"
+    )
+    
+    reasoning_steps: List[str] = dspy.OutputField(
+        desc="Step-by-step medical reasoning, each step as a complete thought"
+    )
+    differential_diagnosis: List[str] = dspy.OutputField(
+        desc="List of possible diagnoses in order of likelihood"
+    )
+    primary_assessment: str = dspy.OutputField(
+        desc="Primary diagnosis and immediate recommendations"
+    )
 
 # Utility functions
 def get_option_letter(options, answer):
@@ -709,6 +748,41 @@ class MedAgent_GuidelineBased(dspy.Module):
         
         return sum(weighted_scores) / len(weighted_scores) if weighted_scores else 0
 
+# Simple Medical Reasoning Agent
+class SimpleMedicalReasoningAgent(dspy.Module):
+    """Simple agent using the MedicalReasoner signature for patient assessment"""
+    
+    def __init__(self):
+        super().__init__()
+        self.reasoner = dspy.Predict(MedicalReasoner)
+    
+    def forward(self, patient_presentation: str):
+        """Analyze patient presentation and provide medical reasoning"""
+        result = self.reasoner(patient_presentation=patient_presentation)
+        return result
+    
+    def answer_question(self, question: str, options: dict) -> str:
+        """Adapt to the standard question-answering interface"""
+        # Use the question as patient presentation
+        result = self.reasoner(patient_presentation=question)
+        
+        # Simple heuristic: choose option that best matches primary assessment
+        primary = result.primary_assessment.lower()
+        best_match = None
+        best_score = 0
+        
+        for key, option in options.items():
+            # Count word matches between primary assessment and option
+            option_words = set(option.lower().split())
+            primary_words = set(primary.split())
+            matches = len(option_words.intersection(primary_words))
+            
+            if matches > best_score:
+                best_score = matches
+                best_match = key
+        
+        return best_match if best_match else list(options.keys())[0]
+
 # Guideline-based Agent Manager
 class GuidelineBasedAgentManager:
     """Manager for different teacher-student agent configurations"""
@@ -724,7 +798,8 @@ class GuidelineBasedAgentManager:
             'mg_ranking_fixed': MedAgent_MG_Ranking_Fixed(),
             'mg_ranking_simple': MedAgent_MG_Ranking_Simple(),
             'mg_ranking_conservative': MedAgent_MG_Ranking_Conservative(),
-            'guideline_based': MedAgent_GuidelineBased()
+            'guideline_based': MedAgent_GuidelineBased(),
+            'simple_medical_reasoning': SimpleMedicalReasoningAgent()
         }
     
     def get_agent(self, agent_type: str):
@@ -745,7 +820,7 @@ class MedicalAgentEvaluator:
     
     def __init__(self, guideline_manager: GuidelineBasedAgentManager):
         self.guideline_manager = guideline_manager
-        self.simple_agent = SimpleMedicalAgent()
+        self.simple_agent = SimpleMedicalAgent(use_chain_of_thought=True)
     
     def load_test_data(self, filepath: str, specialty: str = None):
         """Load test data from JSON file"""
