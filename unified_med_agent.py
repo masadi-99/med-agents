@@ -7,7 +7,7 @@ and better handling of medical context and assumptions.
 """
 
 import dspy
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 from dataclasses import dataclass
 import json
 from enum import Enum
@@ -104,7 +104,7 @@ class EnhancedClaimDecomposer(dspy.Signature):
     
     question: str = dspy.InputField()
     options: Dict[str, str] = dspy.InputField()
-    clinical_analysis: Dict[str, any] = dspy.InputField()
+    clinical_analysis: Dict[str, Any] = dspy.InputField()
     
     claims: List[Dict] = dspy.OutputField(
         desc="""List of structured claims with format:
@@ -129,8 +129,8 @@ class EnhancedClaimDecomposer(dspy.Signature):
 class ContextAwareVerifier(dspy.Signature):
     """Verifies claims with explicit context checking."""
     
-    claim: Dict[str, any] = dspy.InputField()
-    dependent_claims: List[Dict[str, any]] = dspy.InputField(
+    claim: Dict[str, Any] = dspy.InputField()
+    dependent_claims: List[Dict[str, Any]] = dspy.InputField(
         desc="Claims that this claim depends on"
     )
     clinical_context: str = dspy.InputField()
@@ -152,7 +152,7 @@ class DependencyAwareSelector(dspy.Signature):
     
     question: str = dspy.InputField()
     options: Dict[str, str] = dspy.InputField()
-    verified_claims: List[Dict[str, any]] = dspy.InputField()
+    verified_claims: List[Dict[str, Any]] = dspy.InputField()
     claim_dependencies: Dict[str, List[str]] = dspy.InputField(
         desc="Map of claim IDs to their dependencies"
     )
