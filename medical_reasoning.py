@@ -22,11 +22,41 @@ class ClaimType(Enum):
     CONDITION = "CONDITION"  # Conditional statement
 
 class VerificationMethod(Enum):
-    TEXTBOOK = "TEXTBOOK"  # Medical textbooks
+    TEXTBOOK = "TEXTBOOK"  # Standard medical textbooks
     GUIDELINE = "GUIDELINE"  # Clinical guidelines
-    RESEARCH = "RESEARCH"  # Research papers
-    PHYSIOLOGY = "PHYSIOLOGY"  # Physiological principles
-    CLINICAL_REASONING = "CLINICAL_REASONING"  # Expert reasoning
+    RESEARCH = "RESEARCH"  # Peer-reviewed research papers
+    PHYSIOLOGY = "PHYSIOLOGY"  # Basic physiological principles
+    CLINICAL_REASONING = "CLINICAL_REASONING"  # Expert clinical reasoning
+    PATIENT_HISTORY = "PATIENT_HISTORY"  # Patient-reported history
+    PHYSICAL_EXAM = "PHYSICAL_EXAM"  # Direct physical examination findings
+
+class VerificationStatus(Enum):
+    VERIFIED = "VERIFIED"
+    VERIFIED_WITH_CONTEXT = "VERIFIED_WITH_CONTEXT"
+    PARTIALLY_VERIFIED = "PARTIALLY_VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    CONTRADICTED = "CONTRADICTED"
+
+class RelevanceStatus(Enum):
+    RELEVANT = "RELEVANT"
+    PARTIALLY_RELEVANT = "PARTIALLY_RELEVANT"
+    IRRELEVANT = "IRRELEVANT"
+
+# Evidence quality definitions
+EVIDENCE_QUALITY_MAP = {
+    'A': 'High-quality evidence (clinical guidelines, standard textbooks)',
+    'B': 'Moderate-quality evidence (reputable medical sources, consensus statements)',
+    'C': 'Expert opinion or clinical reasoning',
+    'D': 'Patient-reported or anecdotal evidence',
+    'F': 'No clear evidence or unverifiable'
+}
+
+# Confidence level definitions
+CONFIDENCE_LEVELS = {
+    'HIGH': '>90% certainty, strong evidence or consensus',
+    'MODERATE': '60-90% certainty, moderate evidence or expert consensus',
+    'LOW': '<60% certainty, limited evidence or controversial'
+}
 
 @dataclass
 class EnhancedMedicalClaim:
@@ -40,26 +70,44 @@ class EnhancedMedicalClaim:
     supports_option: Optional[str]
     contradicts_options: List[str]
     confidence: str  # HIGH, MODERATE, LOW
+    truth_status: Optional[str]  # VERIFIED, PARTIALLY_VERIFIED, UNVERIFIED, CONTRADICTED
+    relevance_status: str  # RELEVANT, PARTIALLY_RELEVANT, IRRELEVANT
 
 # ============= Normalization Functions =============
 
 def normalize_verification_status(status: str) -> str:
     """Normalize verification status to ensure consistent format."""
     if not status:
-        return "UNVERIFIED"
+        return VerificationStatus.UNVERIFIED.value
+    
+    normalized = status.upper().strip().rstrip('.').rstrip('!')
+    
+    # Map to new verification status enum
+    status_map = {
+        'VERIFIED': VerificationStatus.VERIFIED.value,
+        'VERIFIED_WITH_CONTEXT': VerificationStatus.VERIFIED_WITH_CONTEXT.value,
+        'PARTIALLY_VERIFIED': VerificationStatus.PARTIALLY_VERIFIED.value,
+        'UNVERIFIED': VerificationStatus.UNVERIFIED.value,
+        'CONTRADICTED': VerificationStatus.CONTRADICTED.value,
+        # Remove CONTEXT_MISMATCH - handle as relevance instead
+    }
+    
+    return status_map.get(normalized, VerificationStatus.UNVERIFIED.value)
+
+def normalize_relevance_status(status: str) -> str:
+    """Normalize relevance status to ensure consistent format."""
+    if not status:
+        return RelevanceStatus.RELEVANT.value
     
     normalized = status.upper().strip().rstrip('.').rstrip('!')
     
     status_map = {
-        'VERIFIED': 'VERIFIED',
-        'VERIFIED_WITH_CONTEXT': 'VERIFIED_WITH_CONTEXT',
-        'PARTIALLY_VERIFIED': 'PARTIALLY_VERIFIED',
-        'UNVERIFIED': 'UNVERIFIED',
-        'CONTRADICTED': 'CONTRADICTED',
-        'CONTEXT_MISMATCH': 'CONTEXT_MISMATCH'
+        'RELEVANT': RelevanceStatus.RELEVANT.value,
+        'PARTIALLY_RELEVANT': RelevanceStatus.PARTIALLY_RELEVANT.value,
+        'IRRELEVANT': RelevanceStatus.IRRELEVANT.value,
     }
     
-    return status_map.get(normalized, 'UNVERIFIED')
+    return status_map.get(normalized, RelevanceStatus.RELEVANT.value)
 
 def normalize_claim_type(type_str: str) -> str:
     """Normalize claim type."""
@@ -115,7 +163,7 @@ class EnhancedClaimDecomposer(dspy.Signature):
             context: str (conditions under which claim is true),
             assumptions: List[str] (explicit assumptions),
             depends_on: List[str] (IDs of prerequisite claims),
-            verification_method: TEXTBOOK/GUIDELINE/RESEARCH/PHYSIOLOGY/CLINICAL_REASONING,
+            verification_method: TEXTBOOK/GUIDELINE/RESEARCH/PHYSIOLOGY/CLINICAL_REASONING/PATIENT_HISTORY/PHYSICAL_EXAM,
             supports_option: str (A/B/C/D/E or null),
             contradicts_options: str (comma-separated),
             confidence: HIGH/MODERATE/LOW
@@ -127,7 +175,7 @@ class EnhancedClaimDecomposer(dspy.Signature):
     )
 
 class ContextAwareVerifier(dspy.Signature):
-    """Verifies claims with explicit context checking."""
+    """Verifies claims explicitly separating truth from relevance."""
     
     claim: Dict[str, Any] = dspy.InputField()
     dependent_claims: List[Dict[str, Any]] = dspy.InputField(
@@ -137,14 +185,14 @@ class ContextAwareVerifier(dspy.Signature):
     term_definitions: Dict[str, str] = dspy.InputField()
     
     verification_status: str = dspy.OutputField(
-        desc="VERIFIED, VERIFIED_WITH_CONTEXT, PARTIALLY_VERIFIED, UNVERIFIED, CONTRADICTED, CONTEXT_MISMATCH"
+        desc="VERIFIED, VERIFIED_WITH_CONTEXT, PARTIALLY_VERIFIED, UNVERIFIED, CONTRADICTED"
+    )
+    relevance_status: str = dspy.OutputField(
+        desc="RELEVANT, PARTIALLY_RELEVANT, IRRELEVANT"
     )
     evidence_quality: str = dspy.OutputField(desc="A, B, C, D, or F")
     verification_explanation: str = dspy.OutputField(
-        desc="Detailed explanation of verification including context considerations"
-    )
-    context_validity: str = dspy.OutputField(
-        desc="Whether the claim's context matches the clinical scenario"
+        desc="Detailed explanation of verification and relevance assessment"
     )
 
 class DependencyAwareSelector(dspy.Signature):
@@ -221,7 +269,7 @@ class EnhancedMedicalMCQSolver(dspy.Module):
                 if vc['claim_id'] in claim.get('depends_on', [])
             ]
             
-            # Verify this claim
+            # Verify this claim with improved logic
             try:
                 verification = self.verifier(
                     claim=claim,
@@ -235,18 +283,25 @@ class EnhancedMedicalMCQSolver(dspy.Module):
                     'verification_status': normalize_verification_status(
                         verification.verification_status
                     ),
+                    'relevance_status': normalize_relevance_status(
+                        verification.relevance_status
+                    ),
                     'evidence_quality': verification.evidence_quality,
                     'verification_explanation': verification.verification_explanation,
-                    'context_validity': verification.context_validity
+                    # Separate truth and relevance
+                    'truth_status': normalize_verification_status(
+                        verification.verification_status
+                    ),
                 }
                 
             except Exception as e:
                 verified_claim = {
                     **claim,
-                    'verification_status': 'UNVERIFIED',
+                    'verification_status': VerificationStatus.UNVERIFIED.value,
+                    'relevance_status': RelevanceStatus.RELEVANT.value,
                     'evidence_quality': 'F',
                     'verification_explanation': f'Verification failed: {str(e)}',
-                    'context_validity': 'UNKNOWN'
+                    'truth_status': VerificationStatus.UNVERIFIED.value,
                 }
             
             verified_claims.append(verified_claim)
@@ -370,15 +425,28 @@ def example_better_claims():
         'verification_method': 'PHYSIOLOGY',
         'supports_option': 'B',
         'contradicts_options': 'A,C,D',
-        'confidence': 'HIGH'
+        'confidence': 'HIGH',
+        'truth_status': 'VERIFIED',
+        'relevance_status': 'RELEVANT'
     }
     
     print("Well-Structured Claim Example:")
     print(f"  Type: {example_claim['claim_type']}")
     print(f"  Statement: {example_claim['statement']}")
     print(f"  Context: {example_claim['context']}")
+    print(f"  Truth Status: {example_claim['truth_status']}")
+    print(f"  Relevance Status: {example_claim['relevance_status']}")
     print(f"  Assumptions: {example_claim['assumptions']}")
     print(f"  Dependencies: {example_claim['depends_on']}")
+    
+    # Show evidence quality and confidence definitions
+    print("\nEvidence Quality Levels:")
+    for grade, description in EVIDENCE_QUALITY_MAP.items():
+        print(f"  {grade}: {description}")
+    
+    print("\nConfidence Levels:")
+    for level, description in CONFIDENCE_LEVELS.items():
+        print(f"  {level}: {description}")
     
     # Compare with poorly structured claim
     poor_claim = {
@@ -391,4 +459,4 @@ def example_better_claims():
     
     print("\nPoorly Structured Claim (original style):")
     print(f"  Statement: {poor_claim['statement']}")
-    print(f"  Problems: Ambiguous, missing context, hidden assumptions") 
+    print(f"  Problems: Ambiguous, missing context, hidden assumptions, no truth/relevance separation") 

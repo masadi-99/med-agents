@@ -79,7 +79,9 @@ def test_enhanced_solver():
             print(f"\n  Claim {claim['claim_id']} ({claim['claim_type']}):")
             print(f"    Statement: {claim['statement']}")
             print(f"    Context: {claim['context']}")
-            print(f"    Verification: {claim['verification_status']}")
+            print(f"    Truth Status: {claim.get('truth_status', claim.get('verification_status', 'UNKNOWN'))}")
+            print(f"    Relevance Status: {claim.get('relevance_status', 'UNKNOWN')}")
+            print(f"    Evidence Quality: {claim.get('evidence_quality', 'F')}")
             if claim.get('depends_on'):
                 print(f"    Depends on: {claim['depends_on']}")
         
@@ -94,32 +96,46 @@ def test_enhanced_solver():
             if deps:
                 print(f"  {claim_id} → {deps}")
         
-        # Statistics
+        # Statistics with improved categorization
         print("\nVerification Statistics:")
-        status_counts = {}
+        truth_status_counts = {}
+        relevance_status_counts = {}
         type_counts = {}
+        evidence_quality_counts = {}
         
         for claim in result['verified_claims']:
-            status = claim.get('verification_status', 'UNKNOWN')
-            status_counts[status] = status_counts.get(status, 0) + 1
+            # Truth status (verification)
+            truth_status = claim.get('truth_status', claim.get('verification_status', 'UNKNOWN'))
+            truth_status_counts[truth_status] = truth_status_counts.get(truth_status, 0) + 1
             
+            # Relevance status
+            relevance_status = claim.get('relevance_status', 'UNKNOWN')
+            relevance_status_counts[relevance_status] = relevance_status_counts.get(relevance_status, 0) + 1
+            
+            # Claim type
             claim_type = claim.get('claim_type', 'UNKNOWN')
             type_counts[claim_type] = type_counts.get(claim_type, 0) + 1
+            
+            # Evidence quality
+            evidence_quality = claim.get('evidence_quality', 'F')
+            evidence_quality_counts[evidence_quality] = evidence_quality_counts.get(evidence_quality, 0) + 1
         
-        print(f"  Status distribution: {status_counts}")
-        print(f"  Type distribution: {type_counts}")
+        print(f"  Truth Status Distribution: {truth_status_counts}")
+        print(f"  Relevance Status Distribution: {relevance_status_counts}")
+        print(f"  Type Distribution: {type_counts}")
+        print(f"  Evidence Quality Distribution: {evidence_quality_counts}")
         
-        # Show if context mismatches were detected
-        context_mismatches = [
+        # Show irrelevant claims (instead of context mismatches)
+        irrelevant_claims = [
             c for c in result['verified_claims']
-            if c.get('verification_status') == 'CONTEXT_MISMATCH'
+            if c.get('relevance_status') == 'IRRELEVANT'
         ]
         
-        if context_mismatches:
-            print("\nContext Mismatches Detected:")
-            for claim in context_mismatches:
+        if irrelevant_claims:
+            print("\nIrrelevant Claims Detected:")
+            for claim in irrelevant_claims:
                 print(f"  - {claim['statement']}")
-                print(f"    Expected context: {claim['context']}")
+                print(f"    Reason: {claim.get('verification_explanation', 'No explanation provided')}")
         
         # Show dependency visualization if there are dependencies
         if any(result['claim_dependencies'].values()):
