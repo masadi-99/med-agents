@@ -17,7 +17,7 @@ def setup_dspy():
     
     lm = dspy.LM('openai/gpt-4o-mini', 
                  api_key=api_key,
-                 cache=True,  # Enable caching for consistency
+                 cache=False,  # Disable caching for better reproducibility
                  temperature=0,
                  seed=42,
                  top_p=0)
