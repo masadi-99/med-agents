@@ -148,7 +148,15 @@ class EnhancedMedicalAnalyzer(dspy.Signature):
     )
 
 class EnhancedClaimDecomposer(dspy.Signature):
-    """Decomposes reasoning into structured, verifiable claims."""
+    """Decomposes reasoning into structured, verifiable claims.
+    
+    RELEVANCE ASSESSMENT GUIDANCE:
+    When creating claims, prioritize claims that directly explain or significantly contribute 
+    to understanding the patient's primary presenting symptoms or clinical deterioration. 
+    Claims that only indirectly or partially explain the primary symptoms should be clearly 
+    distinguished. Claims unrelated to the primary symptoms should be avoided or clearly 
+    marked as background information.
+    """
     
     question: str = dspy.InputField()
     options: Dict[str, str] = dspy.InputField()
@@ -175,7 +183,14 @@ class EnhancedClaimDecomposer(dspy.Signature):
     )
 
 class ContextAwareVerifier(dspy.Signature):
-    """Verifies claims explicitly separating truth from relevance."""
+    """Verifies claims explicitly separating truth from relevance.
+    
+    RELEVANCE ASSESSMENT GUIDANCE:
+    When assessing relevance, always prioritize claims that directly explain or significantly 
+    contribute to understanding the patient's primary presenting symptoms or clinical deterioration. 
+    Claims that only indirectly or partially explain the primary symptoms should be marked as 
+    PARTIALLY_RELEVANT. Claims unrelated to the primary symptoms should be marked as IRRELEVANT.
+    """
     
     claim: Dict[str, Any] = dspy.InputField()
     dependent_claims: List[Dict[str, Any]] = dspy.InputField(
@@ -188,15 +203,17 @@ class ContextAwareVerifier(dspy.Signature):
         desc="VERIFIED, VERIFIED_WITH_CONTEXT, PARTIALLY_VERIFIED, UNVERIFIED, CONTRADICTED"
     )
     relevance_status: str = dspy.OutputField(
-        desc="RELEVANT, PARTIALLY_RELEVANT, IRRELEVANT"
+        desc="""RELEVANT if the claim directly explains or significantly contributes to understanding the patient's primary presenting symptoms or clinical deterioration.
+        PARTIALLY_RELEVANT if the claim is correct but only indirectly or partially explains the patient's primary symptoms.
+        IRRELEVANT if the claim does not meaningfully explain or contribute to understanding the patient's primary symptoms."""
     )
     evidence_quality: str = dspy.OutputField(desc="A, B, C, D, or F")
     verification_explanation: str = dspy.OutputField(
-        desc="Detailed explanation of verification and relevance assessment"
+        desc="Detailed explanation of verification and relevance assessment, explicitly stating how the claim relates to the patient's primary symptoms."
     )
 
 class DependencyAwareSelector(dspy.Signature):
-    """Selects answer considering claim dependencies and context."""
+    """Selects answer explicitly prioritizing claims that directly explain the patient's primary symptoms."""
     
     question: str = dspy.InputField()
     options: Dict[str, str] = dspy.InputField()
@@ -208,10 +225,10 @@ class DependencyAwareSelector(dspy.Signature):
     answer: str = dspy.OutputField(desc="Selected answer (A/B/C/D/E)")
     confidence_score: float = dspy.OutputField()
     reasoning_chain: List[str] = dspy.OutputField(
-        desc="Step-by-step reasoning showing how claims lead to answer"
+        desc="Step-by-step reasoning explicitly linking claims to the patient's primary symptoms and clearly stating why the selected option best explains these symptoms."
     )
     critical_claims: List[str] = dspy.OutputField(
-        desc="IDs of claims most critical to the answer"
+        desc="IDs of claims that directly explain or significantly contribute to understanding the patient's primary presenting symptoms."
     )
 
 # ============= Enhanced MCQ Solver =============
@@ -293,6 +310,10 @@ class EnhancedMedicalMCQSolver(dspy.Module):
                         verification.verification_status
                     ),
                 }
+                
+                # Explicitly log warnings if a claim supporting an option is marked as partially relevant or irrelevant
+                if verified_claim['relevance_status'] != RelevanceStatus.RELEVANT.value and claim.get('supports_option'):
+                    print(f"⚠️ Warning: Claim {claim['claim_id']} supporting option {claim['supports_option']} marked as {verified_claim['relevance_status']}. Review relevance assessment.")
                 
             except Exception as e:
                 verified_claim = {
