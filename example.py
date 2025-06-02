@@ -1,165 +1,167 @@
 """
-Example usage of the Enhanced Medical Verifiable Reasoning Framework v2.0
+Test script for Enhanced Medical Verifiable Reasoning Framework v2.0
 """
 
 import dspy
-from medical_reasoning import EnhancedMedicalMCQSolver, visualize_claim_dependencies, example_better_claims
-
-def setup_dspy():
-    """Configure DSPy with your API key."""
-    try:
-        from config import OPENAI_API_KEY
-        api_key = OPENAI_API_KEY
-    except ImportError:
-        print("Error: config.py file not found!")
-        print("Please create a config.py file with your OPENAI_API_KEY")
-        return None
-    
-    lm = dspy.LM('openai/gpt-4o-mini', 
-                 api_key=api_key,
-                 cache=False,  # Disable caching for better reproducibility
-                 temperature=0,
-                 seed=42,
-                 top_p=0)
-    
-    dspy.configure(lm=lm)
-    return lm
+from config import OPENAI_API_KEY
+from medical_reasoning import (
+    EnhancedMedicalMCQSolver, 
+    visualize_claim_dependencies, 
+    visualize_clinical_prioritization,
+    visualize_clinical_contextualization,
+    example_better_claims
+)
+from collections import Counter
 
 def test_enhanced_solver():
-    """Test the enhanced medical MCQ solver."""
+    """Test the enhanced medical MCQ solver with detailed output."""
     
-    print("="*70)
-    print("Testing Enhanced Medical Verifiable Reasoning Framework v2.0")
-    print("="*70)
+    # Configure DSPy with OpenAI
+    lm = dspy.LM(
+        model="openai/gpt-4",
+        api_key=OPENAI_API_KEY,
+        cache=False,
+        temperature=0.1
+    )
+    dspy.configure(lm=lm)
     
-    # The problematic question from the example
-    question = """A 22-year-old woman from a rural area who recently discovered she was pregnant is referred for a cardiology consultation due to cyanosis, dyspnea, and a cardiac murmur revealed at the initial prenatal visit. She is gravida 1, para 0 with an estimated gestational age of 19 weeks. She says that the murmur was found in her childhood, and the doctor at that time placed her under observation only. However, she has been lost to follow-up and has not had proper follow up in years. Currently, she complains of dizziness and occasional dyspnea on exertion which has gradually increased during her pregnancy. Prior to her pregnancy, she did not have any symptoms. The vital signs are as follows: blood pressure 125/60 mm Hg, heart rate 81/min, respiratory rate 13/min, and temperature 36.7°C (98.0°F). Her examination is significant for acrocyanosis and a fixed splitting of S2 and grade 3/6 midsystolic murmur best heard over the left upper sternal border. Which of the following physiological pregnancy changes is causing the change in this patient's condition?"""
-    
-    options = {
-        'A': 'Increase in heart rate',
-        'B': 'Decrease in systemic vascular resistance',
-        'C': 'Increase in cardiac output',
-        'D': 'Increase in blood volume'
-    }
-    
-    # Initialize enhanced solver
+    # Create solver instance
     solver = EnhancedMedicalMCQSolver()
     
-    print("\nQuestion:")
-    print(question[:200] + "...")
-    print("\nOptions:")
-    for k, v in options.items():
-        print(f"  {k}: {v}")
+    # Test question - Heart failure with ASD
+    question = """
+    A 45-year-old woman with a known atrial septal defect (ASD) presents to the emergency department with increasing shortness of breath, fatigue, and lower extremity edema over the past 2 weeks. She reports that she has been feeling progressively worse despite compliance with her medications. On examination, her blood pressure is 95/60 mmHg, heart rate is 110 bpm, and oxygen saturation is 88% on room air. She has jugular venous distension, bilateral lower extremity edema, and hepatomegaly. Echocardiography shows right heart enlargement and an estimated pulmonary artery pressure of 70 mmHg. Laboratory results show a brain natriuretic peptide (BNP) level of 800 pg/mL.
     
-    print("\nProcessing with enhanced framework...")
+    What is the most likely physiological mechanism responsible for her acute clinical deterioration?
+    """
+    
+    options = {
+        'A': 'Decreased left ventricular preload due to right-to-left shunting',
+        'B': 'Increased pulmonary vascular resistance leading to right heart failure', 
+        'C': 'Decreased myocardial contractility due to volume overload',
+        'D': 'Increase in blood volume due to sodium and water retention',
+        'E': 'Decreased systemic vascular resistance causing hypotension'
+    }
+    
+    print("Enhanced Medical Verifiable Reasoning Framework v2.0 Test")
+    print("=" * 70)
+    print(f"Question: {question}\n")
+    
+    print("Options:")
+    for key, value in options.items():
+        print(f"  {key}: {value}")
+    print()
     
     try:
+        # Get solution
         result = solver(question=question, options=options)
         
-        print("\n" + "="*70)
-        print("RESULTS")
-        print("="*70)
+        # Display key findings
+        print("🔍 KEY FINDINGS:")
+        print("-" * 30)
+        print(f"Selected Answer: {result['answer']}")
+        print(f"Confidence: {result['confidence']:.0%}")
         
-        print(f"\nSelected Answer: {result['answer']}")
-        print(f"Confidence: {result['confidence']:.2f}")
+        if 'primary_mechanism_claim' in result:
+            print(f"Primary Mechanism Claim: {result['primary_mechanism_claim']}")
         
-        # Show clinical analysis
-        print("\nClinical Analysis:")
-        print(f"  Context: {result['clinical_analysis']['clinical_context']}")
-        print(f"  Key findings: {result['clinical_analysis']['patient_presentation']}")
+        print()
         
-        # Show critical claims
-        print("\nCritical Claims:")
-        critical_claims = [
-            c for c in result['verified_claims'] 
-            if c['claim_id'] in result.get('critical_claims', [])
-        ]
+        # Clinical Analysis
+        print("🏥 CLINICAL ANALYSIS:")
+        print("-" * 30)
+        clinical = result['clinical_analysis']
+        print(f"Clinical Context: {clinical['clinical_context']}")
+        print(f"Patient Presentation: {clinical['patient_presentation']}")
+        print()
         
-        for claim in critical_claims:
-            print(f"\n  Claim {claim['claim_id']} ({claim['claim_type']}):")
-            print(f"    Statement: {claim['statement']}")
-            print(f"    Context: {claim['context']}")
-            print(f"    Truth Status: {claim.get('truth_status', claim.get('verification_status', 'UNKNOWN'))}")
-            print(f"    Relevance Status: {claim.get('relevance_status', 'UNKNOWN')}")
-            print(f"    Evidence Quality: {claim.get('evidence_quality', 'F')}")
-            if claim.get('depends_on'):
-                print(f"    Depends on: {claim['depends_on']}")
+        # Critical Claims Analysis
+        print("🎯 CRITICAL CLAIMS (Directly Explain Primary Symptoms):")
+        print("-" * 60)
+        critical_claims = result.get('critical_claims', [])
+        for claim_id in critical_claims:
+            claim = next((c for c in result['verified_claims'] if c['claim_id'] == claim_id), None)
+            if claim:
+                print(f"  • {claim_id}: {claim['statement']}")
+                print(f"    Truth: {claim.get('truth_status', 'N/A')} | Clinical Relevance: {claim.get('clinical_relevance', 'N/A')} | Evidence: Grade {claim.get('evidence_quality', 'N/A')}")
+                print()
         
-        # Show reasoning chain
-        print("\nReasoning Chain:")
-        for i, step in enumerate(result['reasoning_chain'][:5]):
-            print(f"  {i+1}. {step}")
+        # Clinical Prioritization
+        if 'clinical_prioritization' in result:
+            visualize_clinical_prioritization(result['clinical_prioritization'], result['verified_claims'])
         
-        # Show claim dependency structure
-        print("\nClaim Dependencies:")
-        for claim_id, deps in result['claim_dependencies'].items():
-            if deps:
-                print(f"  {claim_id} → {deps}")
+        # Clinical Contextualization
+        if 'clinical_contextualization' in result:
+            visualize_clinical_contextualization(result['clinical_contextualization'])
         
-        # Statistics with improved categorization
-        print("\nVerification Statistics:")
-        truth_status_counts = {}
-        relevance_status_counts = {}
-        type_counts = {}
-        evidence_quality_counts = {}
+        # Pitfalls and Alternatives
+        if 'pitfalls_and_alternatives' in result:
+            print("\n⚠️ PITFALLS & ALTERNATIVE EXPLANATIONS:")
+            print("-" * 50)
+            for pitfall in result['pitfalls_and_alternatives']:
+                print(f"  • {pitfall}")
+            print()
         
-        for claim in result['verified_claims']:
-            # Truth status (verification)
-            truth_status = claim.get('truth_status', claim.get('verification_status', 'UNKNOWN'))
-            truth_status_counts[truth_status] = truth_status_counts.get(truth_status, 0) + 1
-            
-            # Relevance status
-            relevance_status = claim.get('relevance_status', 'UNKNOWN')
-            relevance_status_counts[relevance_status] = relevance_status_counts.get(relevance_status, 0) + 1
-            
-            # Claim type
-            claim_type = claim.get('claim_type', 'UNKNOWN')
-            type_counts[claim_type] = type_counts.get(claim_type, 0) + 1
-            
-            # Evidence quality
-            evidence_quality = claim.get('evidence_quality', 'F')
-            evidence_quality_counts[evidence_quality] = evidence_quality_counts.get(evidence_quality, 0) + 1
+        # Full Reasoning Chain
+        print("🧠 REASONING CHAIN:")
+        print("-" * 30)
+        for i, step in enumerate(result['reasoning_chain'], 1):
+            print(f"  {i}. {step}")
+        print()
         
-        print(f"  Truth Status Distribution: {truth_status_counts}")
-        print(f"  Relevance Status Distribution: {relevance_status_counts}")
-        print(f"  Type Distribution: {type_counts}")
-        print(f"  Evidence Quality Distribution: {evidence_quality_counts}")
+        # Claims Summary Statistics
+        verified_claims = result['verified_claims']
         
-        # Show irrelevant claims (instead of context mismatches)
-        irrelevant_claims = [
-            c for c in result['verified_claims']
-            if c.get('relevance_status') == 'IRRELEVANT'
-        ]
+        # Truth Status Distribution
+        truth_counts = Counter(claim.get('truth_status', 'UNKNOWN') for claim in verified_claims)
+        print("📊 TRUTH STATUS DISTRIBUTION:")
+        print("-" * 40)
+        for status, count in truth_counts.items():
+            print(f"  {status}: {count}")
+        print()
         
-        if irrelevant_claims:
-            print("\nIrrelevant Claims Detected:")
-            for claim in irrelevant_claims:
-                print(f"  - {claim['statement']}")
-                print(f"    Reason: {claim.get('verification_explanation', 'No explanation provided')}")
+        # Clinical Relevance Distribution
+        relevance_counts = Counter(claim.get('clinical_relevance', 'UNKNOWN') for claim in verified_claims)
+        print("📊 CLINICAL RELEVANCE DISTRIBUTION:")
+        print("-" * 45)
+        for relevance, count in relevance_counts.items():
+            print(f"  {relevance}: {count}")
+        print()
         
-        # Show dependency visualization if there are dependencies
-        if any(result['claim_dependencies'].values()):
-            visualize_claim_dependencies(result['claims'], result['claim_dependencies'])
+        # Evidence Quality Distribution
+        evidence_counts = Counter(claim.get('evidence_quality', 'F') for claim in verified_claims)
+        print("📊 EVIDENCE QUALITY DISTRIBUTION:")
+        print("-" * 40)
+        for grade, count in evidence_counts.items():
+            print(f"  Grade {grade}: {count}")
+        print()
+        
+        # Claim Dependencies Visualization
+        visualize_claim_dependencies(result['claims'], result['claim_dependencies'])
+        
+        # Detailed Claims Analysis
+        print("\n📋 DETAILED CLAIMS ANALYSIS:")
+        print("-" * 50)
+        for claim in verified_claims:
+            print(f"\n{claim['claim_id']} ({claim.get('claim_type', 'UNKNOWN')})")
+            print(f"  Statement: {claim['statement']}")
+            print(f"  Truth Status: {claim.get('truth_status', 'N/A')}")
+            print(f"  Clinical Relevance: {claim.get('clinical_relevance', 'N/A')}")
+            print(f"  Evidence Quality: Grade {claim.get('evidence_quality', 'N/A')}")
+            print(f"  Supports Option: {claim.get('supports_option', 'None')}")
+            if claim.get('verification_explanation'):
+                print(f"  Explanation: {claim['verification_explanation']}")
+        
+        # Show example of better claim structure
+        example_better_claims()
+        
+        return result
         
     except Exception as e:
-        print(f"\nError: {type(e).__name__}: {str(e)}")
+        print(f"❌ Error during testing: {str(e)}")
         import traceback
         traceback.print_exc()
-    
-    print("\n" + "="*70)
-    print("Test completed")
-    print("="*70)
+        return None
 
 if __name__ == "__main__":
-    # Setup DSPy
-    lm = setup_dspy()
-    
-    if lm is None:
-        print("Failed to setup DSPy. Exiting.")
-        exit(1)
-    
-    # Run the enhanced test
-    test_enhanced_solver()
-    
-    # Show example of better claim structure
-    example_better_claims() 
+    test_enhanced_solver() 
