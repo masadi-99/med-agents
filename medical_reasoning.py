@@ -165,12 +165,21 @@ class EnhancedMedicalAnalyzer(dspy.Signature):
 class EnhancedClaimDecomposer(dspy.Signature):
     """Decomposes reasoning into structured, verifiable claims with explicit clinical prioritization.
     
-    RELEVANCE ASSESSMENT GUIDANCE:
-    When creating claims, prioritize claims that directly explain or significantly contribute 
-    to understanding the patient's primary presenting symptoms or clinical deterioration. 
-    Claims that only indirectly or partially explain the primary symptoms should be clearly 
-    distinguished. Claims unrelated to the primary symptoms should be avoided or clearly 
-    marked as background information.
+    CLAIM DEPENDENCY GUIDELINES:
+    - Start with BASIC FACTS (patient history, symptoms, exam findings)
+    - Build PHYSIOLOGICAL FOUNDATION claims that depend on basic facts
+    - Create MECHANISM claims that depend on physiological foundations
+    - Develop CLINICAL INTERPRETATION claims that depend on mechanisms
+    - End with ANSWER JUSTIFICATION claims that depend on clinical interpretations
+    
+    CLAIM HIERARCHY REQUIREMENTS:
+    1. Level 1: Basic Facts (no dependencies)
+    2. Level 2: Physiological Context (depends on Level 1)
+    3. Level 3: Pathophysiological Mechanisms (depends on Level 2)
+    4. Level 4: Clinical Manifestations (depends on Level 3)
+    5. Level 5: Answer Justification (depends on Level 4)
+    
+    Each claim should explicitly build upon previous claims to create a coherent reasoning chain.
     """
     
     question: str = dspy.InputField()
@@ -181,6 +190,7 @@ class EnhancedClaimDecomposer(dspy.Signature):
         desc="""List of structured claims with format:
         {
             claim_id: str,
+            hierarchy_level: int (1-5),
             claim_type: FACT/INFERENCE/DEFINITION/ASSUMPTION/CONDITION,
             statement: str (explicit and specific),
             context: str (conditions under which claim is true),
@@ -190,12 +200,16 @@ class EnhancedClaimDecomposer(dspy.Signature):
             supports_option: str (A/B/C/D/E or null),
             contradicts_options: str (comma-separated),
             confidence: HIGH/MODERATE/LOW,
-            expected_clinical_relevance: RELEVANT/PARTIALLY_RELEVANT/IRRELEVANT (initial estimation)
+            expected_clinical_relevance: RELEVANT/PARTIALLY_RELEVANT/IRRELEVANT (initial estimation),
+            reasoning_bridge: str (how this claim connects to dependent claims)
         }"""
     )
     
     term_definitions: Dict[str, str] = dspy.OutputField(
         desc="Key medical terms used and their definitions"
+    )
+    claim_hierarchy_explanation: str = dspy.OutputField(
+        desc="Explanation of how claims build upon each other to form a coherent reasoning chain"
     )
 
 class ContextAwareVerifier(dspy.Signature):
@@ -226,8 +240,43 @@ class ContextAwareVerifier(dspy.Signature):
         desc="Detailed explanation explicitly separating truth verification from clinical prioritization."
     )
 
+class ClinicalPrioritizer(dspy.Signature):
+    """Explicitly prioritizes verified claims based on clinical relevance to patient's acute presentation."""
+    
+    verified_claims: List[Dict[str, Any]] = dspy.InputField()
+    clinical_context: str = dspy.InputField()
+    patient_presentation: Dict[str, str] = dspy.InputField()
+    
+    clinical_contextualization: Dict[str, str] = dspy.OutputField(
+        desc="Explicit clinical contextualization of each verified claim, clearly stating how each physiological change manifests clinically in this patient scenario."
+    )
+    clinical_prioritization: List[str] = dspy.OutputField(
+        desc="Ranked list of claim IDs based on their clinical relevance to the patient's acute presentation (most relevant first)."
+    )
+    primary_mechanism_claim: str = dspy.OutputField(
+        desc="Claim ID explicitly identified as the primary physiological mechanism responsible for the patient's acute clinical deterioration."
+    )
+    pitfalls_and_alternatives: List[str] = dspy.OutputField(
+        desc="Explicitly stated potential pitfalls or alternative explanations considered during reasoning."
+    )
+
 class DependencyAwareSelector(dspy.Signature):
-    """Selects answer explicitly prioritizing claims that directly explain the patient's primary symptoms."""
+    """Selects answer by constructing and validating a complete reasoning chain from basic facts to conclusion.
+    
+    REASONING CHAIN CONSTRUCTION:
+    1. Identify foundational claims (Level 1: Basic facts)
+    2. Trace physiological context (Level 2: Normal/abnormal physiology) 
+    3. Establish pathophysiological mechanisms (Level 3: Disease processes)
+    4. Connect to clinical manifestations (Level 4: How pathophysiology → symptoms)
+    5. Justify answer selection (Level 5: Why this option best explains the chain)
+    
+    INSTRUCTIONS FOR SELECTOR:
+    - Explicitly use the provided primary_mechanism_claim as the main justification for selecting the correct answer.
+    - Clearly state how the primary mechanism claim directly explains the patient's acute symptoms.
+    - Explicitly state why other claims, although verified, are less clinically relevant.
+    
+    Ensure each step logically follows from the previous, creating an unbroken chain of reasoning.
+    """
     
     question: str = dspy.InputField()
     options: Dict[str, str] = dspy.InputField()
@@ -235,42 +284,46 @@ class DependencyAwareSelector(dspy.Signature):
     claim_dependencies: Dict[str, List[str]] = dspy.InputField(
         desc="Map of claim IDs to their dependencies"
     )
+    clinical_prioritization: List[str] = dspy.InputField(
+        desc="Pre-determined clinical prioritization from ClinicalPrioritizer"
+    )
+    primary_mechanism_claim: str = dspy.InputField(
+        desc="Pre-identified primary mechanism claim from ClinicalPrioritizer"
+    )
     
     answer: str = dspy.OutputField(desc="Selected answer (A/B/C/D/E)")
     confidence_score: float = dspy.OutputField()
-    clinical_contextualization: Dict[str, str] = dspy.OutputField(
-        desc="Explicit clinical contextualization of each verified inference claim, explaining how each physiological change manifests clinically in this patient scenario."
+    reasoning_chain_validation: Dict[str, List[str]] = dspy.OutputField(
+        desc="Validation of reasoning chain by hierarchy level: {level_1: [claim_ids], level_2: [claim_ids], ...}"
     )
-    clinical_prioritization: List[str] = dspy.OutputField(
-        desc="Ranked list of claim IDs based on their clinical relevance to the patient's acute presentation."
-    )
-    primary_mechanism_claim: str = dspy.OutputField(
-        desc="Claim ID explicitly identified as the primary physiological mechanism responsible for the patient's acute clinical deterioration."
+    causal_pathway: List[str] = dspy.OutputField(
+        desc="Step-by-step causal pathway from basic facts → physiology → pathophysiology → symptoms → answer"
     )
     reasoning_chain: List[str] = dspy.OutputField(
         desc="Step-by-step reasoning explicitly linking claims to the patient's primary symptoms and clearly stating why the selected option best explains these symptoms."
     )
-    pitfalls_and_alternatives: List[str] = dspy.OutputField(
-        desc="Explicitly stated potential pitfalls or alternative explanations considered during reasoning."
-    )
     critical_claims: List[str] = dspy.OutputField(
         desc="IDs of claims that directly explain or significantly contribute to understanding the patient's primary presenting symptoms."
+    )
+    reasoning_gaps: List[str] = dspy.OutputField(
+        desc="Identified gaps or weak links in the reasoning chain that need attention"
     )
 
 # ============= Enhanced MCQ Solver =============
 
 class EnhancedMedicalMCQSolver(dspy.Module):
-    """Enhanced solver with better claim structure and verification."""
+    """Enhanced solver with explicit clinical prioritization and contextualization."""
     
     def __init__(self):
         super().__init__()
         self.analyzer = dspy.Predict(EnhancedMedicalAnalyzer)
         self.decomposer = dspy.Predict(EnhancedClaimDecomposer)
         self.verifier = dspy.Predict(ContextAwareVerifier)
+        self.prioritizer = dspy.Predict(ClinicalPrioritizer)
         self.selector = dspy.Predict(DependencyAwareSelector)
     
     def forward(self, question: str, options: Dict[str, str]) -> Dict:
-        # Step 1: Deep clinical analysis
+        # Step 1: Clinical analysis
         analysis = self.analyzer(question=question, options=options)
         
         clinical_analysis = {
@@ -287,11 +340,9 @@ class EnhancedMedicalMCQSolver(dspy.Module):
             clinical_analysis=clinical_analysis
         )
         
-        # Step 3: Build dependency graph and verify claims
+        # Step 3: Verify claims explicitly separating truth and relevance
         claim_dict = {c['claim_id']: c for c in decomposition.claims}
         verified_claims = []
-        
-        # Topological sort to verify in dependency order
         verified_ids = set()
         
         def verify_claim_with_deps(claim_id: str):
@@ -302,54 +353,34 @@ class EnhancedMedicalMCQSolver(dspy.Module):
             if not claim:
                 return
             
-            # First verify dependencies
+            # Verify dependencies first
             for dep_id in claim.get('depends_on', []):
                 verify_claim_with_deps(dep_id)
             
-            # Get verified dependent claims
             dependent_claims = [
                 vc for vc in verified_claims 
                 if vc['claim_id'] in claim.get('depends_on', [])
             ]
             
-            # Verify this claim with improved logic
-            try:
-                verification = self.verifier(
-                    claim=claim,
-                    dependent_claims=dependent_claims,
-                    clinical_context=analysis.clinical_context,
-                    term_definitions=decomposition.term_definitions
-                )
-                
-                verified_claim = {
-                    **claim,
-                    'verification_status': normalize_verification_status(
-                        verification.verification_status
-                    ),
-                    'clinical_relevance': normalize_clinical_relevance(
-                        verification.clinical_relevance
-                    ),
-                    'evidence_quality': verification.evidence_quality,
-                    'verification_explanation': verification.verification_explanation,
-                    # Separate truth and relevance
-                    'truth_status': normalize_verification_status(
-                        verification.verification_status
-                    ),
-                }
-                
-                # Explicitly log warnings if a claim supporting an option is marked as partially relevant or irrelevant
-                if verified_claim['clinical_relevance'] != RelevanceStatus.RELEVANT.value and claim.get('supports_option'):
-                    print(f"⚠️ Warning: Claim {claim['claim_id']} supporting option {claim['supports_option']} marked as {verified_claim['clinical_relevance']}. Review clinical relevance assessment.")
-                
-            except Exception as e:
-                verified_claim = {
-                    **claim,
-                    'verification_status': VerificationStatus.UNVERIFIED.value,
-                    'clinical_relevance': RelevanceStatus.RELEVANT.value,
-                    'evidence_quality': 'F',
-                    'verification_explanation': f'Verification failed: {str(e)}',
-                    'truth_status': VerificationStatus.UNVERIFIED.value,
-                }
+            verification = self.verifier(
+                claim=claim,
+                dependent_claims=dependent_claims,
+                clinical_context=analysis.clinical_context,
+                term_definitions=decomposition.term_definitions
+            )
+            
+            verified_claim = {
+                **claim,
+                'verification_status': normalize_verification_status(verification.verification_status),
+                'clinical_relevance': normalize_clinical_relevance(verification.clinical_relevance),
+                'evidence_quality': verification.evidence_quality,
+                'verification_explanation': verification.verification_explanation,
+                'truth_status': normalize_verification_status(verification.verification_status),
+            }
+            
+            # Explicitly log warnings if a claim supporting an option is marked as partially relevant or irrelevant
+            if verified_claim['clinical_relevance'] != RelevanceStatus.RELEVANT.value and claim.get('supports_option'):
+                print(f"⚠️ Warning: Claim {claim['claim_id']} supporting option {claim['supports_option']} marked as {verified_claim['clinical_relevance']}. Review clinical relevance assessment.")
             
             verified_claims.append(verified_claim)
             verified_ids.add(claim_id)
@@ -360,16 +391,25 @@ class EnhancedMedicalMCQSolver(dspy.Module):
         
         # Step 4: Build dependency map
         claim_dependencies = {
-            c['claim_id']: c.get('depends_on', []) 
+            c['claim_id']: c.get('depends_on', [])
             for c in decomposition.claims
         }
         
-        # Step 5: Select answer with dependency awareness and explicit clinical prioritization
+        # Step 4: Explicit Clinical Prioritization (NEW STEP)
+        prioritization = self.prioritizer(
+            verified_claims=verified_claims,
+            clinical_context=analysis.clinical_context,
+            patient_presentation=analysis.patient_presentation
+        )
+        
+        # Step 5: Select answer with explicit clinical prioritization and contextualization
         selection = self.selector(
             question=question,
             options=options,
             verified_claims=verified_claims,
-            claim_dependencies=claim_dependencies
+            claim_dependencies=claim_dependencies,
+            clinical_prioritization=prioritization.clinical_prioritization,
+            primary_mechanism_claim=prioritization.primary_mechanism_claim
         )
         
         return {
@@ -379,12 +419,16 @@ class EnhancedMedicalMCQSolver(dspy.Module):
             'claims': decomposition.claims,
             'verified_claims': verified_claims,
             'term_definitions': decomposition.term_definitions,
-            'clinical_contextualization': selection.clinical_contextualization,
-            'clinical_prioritization': selection.clinical_prioritization,
-            'primary_mechanism_claim': selection.primary_mechanism_claim,
+            'claim_hierarchy_explanation': decomposition.claim_hierarchy_explanation,
+            'reasoning_chain_validation': selection.reasoning_chain_validation,
+            'causal_pathway': selection.causal_pathway,
+            'clinical_contextualization': prioritization.clinical_contextualization,
+            'clinical_prioritization': prioritization.clinical_prioritization,
+            'primary_mechanism_claim': prioritization.primary_mechanism_claim,
             'reasoning_chain': selection.reasoning_chain,
-            'pitfalls_and_alternatives': selection.pitfalls_and_alternatives,
+            'pitfalls_and_alternatives': prioritization.pitfalls_and_alternatives,
             'critical_claims': selection.critical_claims,
+            'reasoning_gaps': selection.reasoning_gaps,
             'claim_dependencies': claim_dependencies
         }
 
@@ -531,4 +575,56 @@ def example_better_claims():
     
     print("\nPoorly Structured Claim (original style):")
     print(f"  Statement: {poor_claim['statement']}")
-    print(f"  Problems: Ambiguous, missing context, hidden assumptions, no truth/relevance separation, no clinical prioritization") 
+    print(f"  Problems: Ambiguous, missing context, hidden assumptions, no truth/relevance separation, no clinical prioritization")
+
+def visualize_reasoning_hierarchy(verified_claims: List[Dict], claim_hierarchy_explanation: str):
+    """Visualize the hierarchical structure of reasoning claims."""
+    print("\n🏗️ REASONING HIERARCHY:")
+    print("-" * 50)
+    print(f"Hierarchy Explanation: {claim_hierarchy_explanation}\n")
+    
+    # Group claims by hierarchy level
+    levels = {}
+    for claim in verified_claims:
+        level = claim.get('hierarchy_level', 0)
+        if level not in levels:
+            levels[level] = []
+        levels[level].append(claim)
+    
+    # Display each level
+    level_names = {
+        1: "Level 1: Basic Facts",
+        2: "Level 2: Physiological Context", 
+        3: "Level 3: Pathophysiological Mechanisms",
+        4: "Level 4: Clinical Manifestations",
+        5: "Level 5: Answer Justification"
+    }
+    
+    for level in sorted(levels.keys()):
+        if level > 0:  # Skip level 0 (unassigned)
+            print(f"\n{level_names.get(level, f'Level {level}')}:")
+            print("-" * 30)
+            for claim in levels[level]:
+                print(f"  • {claim['claim_id']}: {claim['statement'][:80]}...")
+                if claim.get('reasoning_bridge'):
+                    print(f"    Bridge: {claim['reasoning_bridge']}")
+                if claim.get('depends_on'):
+                    print(f"    Depends on: {claim['depends_on']}")
+
+def visualize_causal_pathway(causal_pathway: List[str]):
+    """Visualize the causal pathway from facts to conclusion."""
+    print("\n🔗 CAUSAL PATHWAY:")
+    print("-" * 40)
+    for i, step in enumerate(causal_pathway, 1):
+        arrow = " ↓ " if i < len(causal_pathway) else ""
+        print(f"  {i}. {step}{arrow}")
+
+def visualize_reasoning_gaps(reasoning_gaps: List[str]):
+    """Visualize identified gaps in reasoning."""
+    if reasoning_gaps:
+        print("\n⚠️ REASONING GAPS IDENTIFIED:")
+        print("-" * 45)
+        for gap in reasoning_gaps:
+            print(f"  • {gap}")
+    else:
+        print("\n✅ No reasoning gaps identified - chain appears complete") 

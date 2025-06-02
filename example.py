@@ -9,6 +9,9 @@ from medical_reasoning import (
     visualize_claim_dependencies, 
     visualize_clinical_prioritization,
     visualize_clinical_contextualization,
+    visualize_reasoning_hierarchy,
+    visualize_causal_pathway,
+    visualize_reasoning_gaps,
     example_better_claims
 )
 from collections import Counter
@@ -18,7 +21,7 @@ def test_enhanced_solver():
     
     # Configure DSPy with OpenAI
     lm = dspy.LM(
-        model="openai/gpt-4",
+        model="openai/gpt-4o-mini",
         api_key=OPENAI_API_KEY,
         cache=False,
         temperature=0.1
@@ -28,19 +31,14 @@ def test_enhanced_solver():
     # Create solver instance
     solver = EnhancedMedicalMCQSolver()
     
-    # Test question - Heart failure with ASD
-    question = """
-    A 45-year-old woman with a known atrial septal defect (ASD) presents to the emergency department with increasing shortness of breath, fatigue, and lower extremity edema over the past 2 weeks. She reports that she has been feeling progressively worse despite compliance with her medications. On examination, her blood pressure is 95/60 mmHg, heart rate is 110 bpm, and oxygen saturation is 88% on room air. She has jugular venous distension, bilateral lower extremity edema, and hepatomegaly. Echocardiography shows right heart enlargement and an estimated pulmonary artery pressure of 70 mmHg. Laboratory results show a brain natriuretic peptide (BNP) level of 800 pg/mL.
-    
-    What is the most likely physiological mechanism responsible for her acute clinical deterioration?
-    """
+    # Test question - Pregnant woman with ASD (original question)
+    question = """A 22-year-old woman from a rural area who recently discovered she was pregnant is referred for a cardiology consultation due to cyanosis, dyspnea, and a cardiac murmur revealed at the initial prenatal visit. She is gravida 1, para 0 with an estimated gestational age of 19 weeks. She says that the murmur was found in her childhood, and the doctor at that time placed her under observation only. However, she has been lost to follow-up and has not had proper follow up in years. Currently, she complains of dizziness and occasional dyspnea on exertion which has gradually increased during her pregnancy. Prior to her pregnancy, she did not have any symptoms. The vital signs are as follows: blood pressure 125/60 mm Hg, heart rate 81/min, respiratory rate 13/min, and temperature 36.7°C (98.0°F). Her examination is significant for acrocyanosis and a fixed splitting of S2 and grade 3/6 midsystolic murmur best heard over the left upper sternal border. Which of the following physiological pregnancy changes is causing the change in this patient's condition?"""
     
     options = {
-        'A': 'Decreased left ventricular preload due to right-to-left shunting',
-        'B': 'Increased pulmonary vascular resistance leading to right heart failure', 
-        'C': 'Decreased myocardial contractility due to volume overload',
-        'D': 'Increase in blood volume due to sodium and water retention',
-        'E': 'Decreased systemic vascular resistance causing hypotension'
+        'A': 'Increase in heart rate',
+        'B': 'Decrease in systemic vascular resistance',
+        'C': 'Increase in cardiac output',
+        'D': 'Increase in blood volume'
     }
     
     print("Enhanced Medical Verifiable Reasoning Framework v2.0 Test")
@@ -55,7 +53,7 @@ def test_enhanced_solver():
     try:
         # Get solution
         result = solver(question=question, options=options)
-        
+        print(result)
         # Display key findings
         print("🔍 KEY FINDINGS:")
         print("-" * 30)
@@ -89,6 +87,18 @@ def test_enhanced_solver():
         # Clinical Prioritization
         if 'clinical_prioritization' in result:
             visualize_clinical_prioritization(result['clinical_prioritization'], result['verified_claims'])
+        
+        # Reasoning Hierarchy
+        if 'claim_hierarchy_explanation' in result:
+            visualize_reasoning_hierarchy(result['verified_claims'], result['claim_hierarchy_explanation'])
+        
+        # Causal Pathway
+        if 'causal_pathway' in result:
+            visualize_causal_pathway(result['causal_pathway'])
+        
+        # Reasoning Gaps
+        if 'reasoning_gaps' in result:
+            visualize_reasoning_gaps(result['reasoning_gaps'])
         
         # Clinical Contextualization
         if 'clinical_contextualization' in result:
@@ -153,7 +163,7 @@ def test_enhanced_solver():
                 print(f"  Explanation: {claim['verification_explanation']}")
         
         # Show example of better claim structure
-        example_better_claims()
+        #example_better_claims()
         
         return result
         
