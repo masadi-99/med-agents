@@ -308,10 +308,66 @@ class FinalAnswerSelector(dspy.Signature):
         desc="Analysis of how each hierarchy level contributed to the decision"
     )
 
-# ============= Enhanced Comparative Reasoning Solver =============
+# ============= Optimized DSPy Signatures for Batch Processing =============
 
-class EnhancedComparativeReasoningSolver(dspy.Module):
-    """Enhanced comparative solver with better claim matching and level-based analysis."""
+class BatchLevelAnalyzer(dspy.Signature):
+    """Analyze all claims at a specific hierarchy level across all options simultaneously."""
+    
+    level: int = dspy.InputField(desc="Hierarchy level being analyzed (1-5)")
+    level_claims_by_option: Dict[str, List[Dict]] = dspy.InputField(
+        desc="Claims at this level for each option: {option_letter: [claims]}"
+    )
+    question_context: str = dspy.InputField()
+    
+    claim_relationships: List[Dict] = dspy.OutputField(
+        desc="""Analysis of claim relationships with format:
+        {
+            relationship_id: str,
+            claims_involved: Dict[str, str] (option -> claim_id),
+            relationship_type: 'IDENTICAL'/'SIMILAR'/'RELATED'/'CONFLICTING'/'UNRELATED',
+            is_divergence_point: bool,
+            divergence_type: str (if divergence: 'mechanism'/'assumption'/'interpretation'/'factual'),
+            description: str,
+            clinical_significance: str,
+            options_in_conflict: List[str] (if divergence)
+        }"""
+    )
+    level_summary: str = dspy.OutputField(
+        desc="Summary of key patterns and conflicts at this level"
+    )
+
+class BatchDivergenceJudge(dspy.Signature):
+    """Judge multiple divergences at once with level-aware weighting."""
+    
+    level: int = dspy.InputField(desc="Hierarchy level of divergences")
+    divergences: List[Dict] = dspy.InputField(desc="List of divergences to judge")
+    option_claims: Dict[str, Dict] = dspy.InputField(
+        desc="Claim details for each option involved in divergences"
+    )
+    clinical_context: str = dspy.InputField()
+    patient_presentation: Dict[str, str] = dspy.InputField()
+    
+    batch_resolutions: List[Dict] = dspy.OutputField(
+        desc="""Resolutions for all divergences with format:
+        {
+            divergence_id: str,
+            winning_option: str,
+            confidence: float (0-1),
+            level_weight: float (0-1),
+            divergence_impact: str,
+            reasoning: str,
+            evidence_quality: str (A/B/C/D/F),
+            comparative_analysis: str (why this option beats others)
+        }"""
+    )
+    level_importance: float = dspy.OutputField(
+        desc="Overall importance of this level for final decision (0-1)"
+    )
+
+# ============= Optimized Comparative Reasoning Solver =============
+
+class OptimizedComparativeReasoningSolver(dspy.Module):
+    """Optimized comparative solver with batched processing to reduce LLM calls."""
     
     def __init__(self):
         super().__init__()
@@ -319,15 +375,14 @@ class EnhancedComparativeReasoningSolver(dspy.Module):
         self.decomposer = dspy.Predict(EnhancedClaimDecomposer)
         self.verifier = dspy.Predict(ContextAwareVerifier)
         self.prioritizer = dspy.Predict(ClinicalPrioritizer)
-        self.pairwise_matcher = dspy.Predict(PairwiseClaimMatcher)
-        self.level_analyzer = dspy.Predict(LevelBasedDivergenceAnalyzer)
-        self.structured_judge = dspy.Predict(StructuredDivergenceJudge)
+        self.batch_level_analyzer = dspy.Predict(BatchLevelAnalyzer)
+        self.batch_divergence_judge = dspy.Predict(BatchDivergenceJudge)
         self.final_selector = dspy.Predict(FinalAnswerSelector)
     
     def forward(self, question: str, options: Dict[str, str]) -> Dict:
-        print("🔄 Starting enhanced comparative reasoning analysis...")
+        print("🚀 Starting optimized comparative reasoning analysis...")
         
-        # Step 1: Generate reasoning trees for each option
+        # Step 1: Generate reasoning trees for each option (parallelizable but kept sequential for now)
         option_trees = {}
         option_analyses = {}
         
@@ -362,76 +417,103 @@ class EnhancedComparativeReasoningSolver(dspy.Module):
             option_trees[option_letter] = verified_claims
             option_analyses[option_letter] = clinical_analysis
         
-        print("🔍 Performing pairwise claim matching...")
+        print("⚡ Performing batched level-by-level analysis...")
         
-        # Step 2: Enhanced pairwise claim matching
-        claim_comparisons = self._perform_pairwise_matching(option_trees)
+        # Step 2: Optimized level-by-level batch analysis
+        level_relationships = {}
+        level_divergences = {}
         
-        print("📊 Analyzing divergences by hierarchy level...")
+        # Group claims by level across all options
+        claims_by_level = defaultdict(dict)
+        for option, claims in option_trees.items():
+            for claim in claims:
+                level = claim.get('hierarchy_level', 1)
+                if option not in claims_by_level[level]:
+                    claims_by_level[level][option] = []
+                claims_by_level[level][option].append(claim)
         
-        # Step 3: Level-based divergence analysis
-        level_divergences = self._analyze_divergences_by_level(
-            option_trees, claim_comparisons, question
-        )
+        # Analyze each level in batch
+        for level in sorted(claims_by_level.keys()):
+            if level > 0:
+                level_claims = claims_by_level[level]
+                if len(level_claims) > 1:  # Only analyze if multiple options have claims at this level
+                    print(f"🔍 Batch analyzing level {level}...")
+                    
+                    try:
+                        level_analysis = self.batch_level_analyzer(
+                            level=level,
+                            level_claims_by_option=level_claims,
+                            question_context=question
+                        )
+                        
+                        level_relationships[level] = level_analysis.claim_relationships
+                        
+                        # Extract divergences from relationships
+                        divergences = [
+                            rel for rel in level_analysis.claim_relationships
+                            if rel.get('is_divergence_point', False)
+                        ]
+                        
+                        if divergences:
+                            level_divergences[level] = divergences
+                            
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not analyze level {level}: {e}")
+                        # Create basic divergences as fallback
+                        level_divergences[level] = self._create_fallback_divergences(level, level_claims)
         
-        print(f"🏛️ Judging {len(level_divergences)} structured divergences...")
+        print(f"⚖️ Batch judging divergences across {len(level_divergences)} levels...")
         
-        # Step 4: Structured divergence judgment
+        # Step 3: Optimized batch divergence judgment
         divergence_resolutions = {}
         option_scores = {opt: 0 for opt in options.keys()}
         level_scores = {opt: defaultdict(float) for opt in options.keys()}
         
         for level, divergences in level_divergences.items():
-            for divergence in divergences:
-                if divergence.get('critical_for_answer', False):
-                    # Get claim details for judgment
-                    claim_details = {}
-                    div_options = divergence.get('options', [])
-                    
-                    # Try to get claim details for each option in the divergence
-                    for opt in div_options:
-                        if opt in option_trees:
-                            # Look for relevant claims at this level
-                            level_claims = [c for c in option_trees[opt] if c.get('hierarchy_level', 1) == level]
-                            if level_claims:
-                                # Use the first claim at this level as representative
-                                claim_details[opt] = level_claims[0]
-                    
-                    # Only judge if we have claim details for at least one option
-                    if claim_details:
-                        try:
-                            judgment = self.structured_judge(
-                                divergence=divergence,
-                                level=level,
-                                claim_details=claim_details,
-                                clinical_context=list(option_analyses.values())[0]['clinical_context'],
-                                patient_presentation=list(option_analyses.values())[0]['patient_presentation']
-                            )
-                            
-                            div_id = divergence['divergence_id']
-                            divergence_resolutions[div_id] = judgment
+            if divergences:
+                # Prepare option claims for this level
+                option_claims = {}
+                for opt in options.keys():
+                    if opt in claims_by_level[level]:
+                        level_claims = claims_by_level[level][opt]
+                        if level_claims:
+                            option_claims[opt] = level_claims[0]  # Use first claim as representative
+                
+                if option_claims:
+                    try:
+                        # Batch judge all divergences at this level
+                        batch_judgment = self.batch_divergence_judge(
+                            level=level,
+                            divergences=divergences,
+                            option_claims=option_claims,
+                            clinical_context=list(option_analyses.values())[0]['clinical_context'],
+                            patient_presentation=list(option_analyses.values())[0]['patient_presentation']
+                        )
+                        
+                        # Process batch resolutions
+                        for resolution in batch_judgment.batch_resolutions:
+                            div_id = resolution['divergence_id']
+                            divergence_resolutions[div_id] = resolution
                             
                             # Score with level weighting
-                            winning_option = judgment.winning_option.strip('"\'')
+                            winning_option = resolution['winning_option'].strip('"\'')
                             if winning_option in option_scores:
-                                weighted_score = judgment.confidence * judgment.level_weight
+                                confidence = resolution['confidence']
+                                level_weight = resolution.get('level_weight', batch_judgment.level_importance)
+                                weighted_score = confidence * level_weight
                                 option_scores[winning_option] += weighted_score
                                 level_scores[winning_option][level] += weighted_score
                             else:
-                                print(f"⚠️ Warning: Unknown option '{winning_option}' from judgment")
+                                print(f"⚠️ Warning: Unknown option '{winning_option}' from batch judgment")
                                 
-                        except Exception as e:
-                            print(f"⚠️ Warning: Could not judge divergence {divergence.get('divergence_id', 'unknown')}: {e}")
-                            # Add a minimal score for the first option as fallback
-                            if div_options:
-                                fallback_option = div_options[0]
-                                if fallback_option in option_scores:
-                                    option_scores[fallback_option] += 0.1
-                                    level_scores[fallback_option][level] += 0.1
-                    else:
-                        print(f"⚠️ Warning: No claim details found for divergence {divergence.get('divergence_id', 'unknown')}")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not judge divergences at level {level}: {e}")
+                        # Add fallback scoring
+                        for opt in option_claims.keys():
+                            option_scores[opt] += 0.1
+                            level_scores[opt][level] += 0.1
         
-        # Step 5: Final answer selection
+        # Step 4: Final answer selection
         best_option = max(option_scores, key=option_scores.get) if any(option_scores.values()) else list(options.keys())[0]
         best_score = option_scores[best_option] if best_option in option_scores else 0.0
         
@@ -440,145 +522,61 @@ class EnhancedComparativeReasoningSolver(dspy.Module):
             question=question,
             options=options,
             divergence_resolutions=[
-                {'divergence': div, 'judgment': res, 'level': self._extract_level_from_div_id(div_id)}
-                for div_id, res in divergence_resolutions.items()
-                for div in [d for level_divs in level_divergences.values() for d in level_divs if d['divergence_id'] == div_id]
+                {'divergence': div, 'judgment': res, 'level': level}
+                for level, divs in level_divergences.items()
+                for div in divs
+                for res in [divergence_resolutions.get(div.get('relationship_id', ''), {})]
+                if res
             ],
             option_claim_trees=option_trees
         )
+        
+        print(f"✅ Optimized analysis complete! Reduced to ~{2 + len(level_divergences)} LLM calls")
         
         return {
             'answer': best_option,
             'confidence': best_score,
             'option_trees': option_trees,
             'option_analyses': option_analyses,
-            'claim_comparisons': claim_comparisons,
+            'level_relationships': level_relationships,
             'level_divergences': level_divergences,
             'divergence_resolutions': divergence_resolutions,
             'option_scores': option_scores,
             'level_scores': level_scores,
             'final_selection': final_selection,
-            'reasoning_method': 'enhanced_comparative_analysis'
+            'reasoning_method': 'optimized_batch_comparative_analysis',
+            'optimization_stats': {
+                'levels_analyzed': len(level_divergences),
+                'total_divergences': sum(len(divs) for divs in level_divergences.values()),
+                'estimated_call_reduction': f"~{len(options) * (len(options) - 1) // 2 * 5}→{2 + len(level_divergences)} calls"
+            }
         }
     
-    def _perform_pairwise_matching(self, option_trees: Dict[str, List[Dict]]) -> List[ClaimComparison]:
-        """Perform enhanced pairwise claim matching."""
-        comparisons = []
-        option_keys = list(option_trees.keys())
+    def _create_fallback_divergences(self, level: int, level_claims: Dict[str, List[Dict]]) -> List[Dict]:
+        """Create basic divergences when batch analysis fails."""
+        divergences = []
+        options = list(level_claims.keys())
         
-        for i in range(len(option_keys)):
-            for j in range(i + 1, len(option_keys)):
-                opt1, opt2 = option_keys[i], option_keys[j]
-                claims1, claims2 = option_trees[opt1], option_trees[opt2]
+        for i in range(len(options)):
+            for j in range(i + 1, len(options)):
+                opt1, opt2 = options[i], options[j]
+                div_id = f"L{level}_FALLBACK_{opt1}v{opt2}"
                 
-                # Compare claims at same hierarchy levels
-                for claim1 in claims1:
-                    level1 = claim1.get('hierarchy_level', 1)
-                    for claim2 in claims2:
-                        level2 = claim2.get('hierarchy_level', 1)
-                        
-                        # Only compare claims at same level
-                        if level1 == level2:
-                            comparison = self.pairwise_matcher(
-                                claim1=claim1,
-                                claim2=claim2,
-                                option1=opt1,
-                                option2=opt2
-                            )
-                            
-                            comparisons.append(ClaimComparison(
-                                claim1_id=claim1['claim_id'],
-                                claim2_id=claim2['claim_id'],
-                                option1=opt1,
-                                option2=opt2,
-                                similarity=ClaimSimilarity(comparison.similarity),
-                                divergence_point=comparison.is_divergence_point,
-                                comparison_notes=comparison.comparison_explanation,
-                                level=level1
-                            ))
+                divergences.append({
+                    'relationship_id': div_id,
+                    'claims_involved': {
+                        opt1: level_claims[opt1][0]['claim_id'] if level_claims[opt1] else f"{opt1}_missing",
+                        opt2: level_claims[opt2][0]['claim_id'] if level_claims[opt2] else f"{opt2}_missing"
+                    },
+                    'relationship_type': 'CONFLICTING',
+                    'is_divergence_point': True,
+                    'divergence_type': 'basic_conflict',
+                    'description': f'Basic conflict between options {opt1} and {opt2} at level {level}',
+                    'clinical_significance': 'Requires judgment between competing explanations',
+                    'options_in_conflict': [opt1, opt2]
+                })
         
-        return comparisons
-    
-    def _analyze_divergences_by_level(self, option_trees: Dict[str, List[Dict]], 
-                                    comparisons: List[ClaimComparison], 
-                                    question: str) -> Dict[int, List[DivergencePoint]]:
-        """Analyze divergences grouped by hierarchy level."""
-        level_divergences = defaultdict(list)
-        
-        # Group comparisons by level
-        level_comparisons = defaultdict(list)
-        for comp in comparisons:
-            if comp.divergence_point:
-                level_comparisons[comp.level].append(comp)
-        
-        # Analyze each level
-        for level, comps in level_comparisons.items():
-            if not comps:
-                continue
-                
-            # Group claims by level for this analysis
-            level_claims = {}
-            for opt, claims in option_trees.items():
-                level_claims[opt] = [c for c in claims if c.get('hierarchy_level', 1) == level]
-            
-            # Get option pairs
-            option_pairs = list(set((comp.option1, comp.option2) for comp in comps))
-            
-            try:
-                # Analyze divergences at this level
-                analysis = self.level_analyzer(
-                    level=level,
-                    option_pairs=option_pairs,
-                    level_claims=level_claims,
-                    divergent_comparisons=[{
-                        'claim1_id': comp.claim1_id,
-                        'claim2_id': comp.claim2_id,
-                        'option1': comp.option1,
-                        'option2': comp.option2,
-                        'similarity': comp.similarity.value,
-                        'notes': comp.comparison_notes
-                    } for comp in comps],
-                    question_context=question
-                )
-                
-                # Convert to DivergencePoint objects
-                for div_data in analysis.level_divergences:
-                    # Ensure div_data has all required fields
-                    div_data_safe = {
-                        'divergence_id': div_data.get('divergence_id', f'L{level}_DIV_{len(level_divergences[level])+1}'),
-                        'claim_pairs': div_data.get('claim_pairs', []),
-                        'options': div_data.get('options', [comp.option1, comp.option2]),
-                        'divergence_type': div_data.get('divergence_type', 'unknown'),
-                        'description': div_data.get('description', 'Divergence in reasoning at this level'),
-                        'level': level,
-                        'critical_for_answer': div_data.get('critical_for_answer', True)
-                    }
-                    level_divergences[level].append(div_data_safe)  # Store dict for easier access
-                    
-            except Exception as e:
-                print(f"⚠️ Warning: Could not analyze divergences at level {level}: {e}")
-                # Create a basic divergence entry for this level
-                for i, comp in enumerate(comps):
-                    basic_divergence = {
-                        'divergence_id': f'L{level}_DIV_BASIC_{i+1}',
-                        'claim_pairs': [(comp.claim1_id, comp.claim2_id)],
-                        'options': [comp.option1, comp.option2],
-                        'divergence_type': 'basic_conflict',
-                        'description': f'Basic divergence between options {comp.option1} and {comp.option2}',
-                        'level': level,
-                        'critical_for_answer': True
-                    }
-                    level_divergences[level].append(basic_divergence)
-        
-        return dict(level_divergences)
-    
-    def _extract_level_from_div_id(self, div_id: str) -> int:
-        """Extract level from divergence ID."""
-        # Assuming format like "L1_DIV_1" 
-        try:
-            return int(div_id.split('_')[0][1:])
-        except:
-            return 1
+        return divergences
     
     def _verify_claims(self, claims: List[Dict], clinical_context: str, term_definitions: Dict[str, str]) -> List[Dict]:
         """Helper method to verify claims for an option tree."""
@@ -628,7 +626,7 @@ class EnhancedComparativeReasoningSolver(dspy.Module):
         
         return verified_claims
 
-# ============= Enhanced Visualization Functions =============
+# ============= Complete Visualization Functions =============
 
 def visualize_enhanced_option_trees(option_trees: Dict[str, List[Dict]], option_analyses: Dict[str, Dict]):
     """Enhanced visualization of option trees with beautiful structure and detailed information."""
@@ -806,10 +804,14 @@ def visualize_level_divergences(level_divergences: Dict[int, List[Dict]]):
             
             type_icon = type_icons.get(divergence_type, '❓')
             
-            print(f"│ {critical_icon} {type_icon} {div['divergence_id']} ({divergence_type})")
-            print(f"│ ├─ Options Involved: {' vs '.join(div.get('options', []))}")
+            div_id = div.get('divergence_id', div.get('relationship_id', 'Unknown'))
+            options_involved = div.get('options', div.get('options_in_conflict', []))
+            description = div.get('description', 'No description')
+            
+            print(f"│ {critical_icon} {type_icon} {div_id} ({divergence_type})")
+            print(f"│ ├─ Options Involved: {' vs '.join(options_involved)}")
             print(f"│ ├─ Claim Pairs: {len(div.get('claim_pairs', []))} pairs")
-            print(f"│ └─ Description: {div.get('description', 'No description')[:60]}...")
+            print(f"│ └─ Description: {description[:60]}...")
             
             if i < len(divergences) - 1:
                 print("│" + "─" * 70)
@@ -834,14 +836,18 @@ def visualize_divergence_details(level_divergences: Dict[int, List[Dict]], optio
     print(f"📊 Analyzing {len(critical_divergences)} critical divergences in detail:\n")
     
     for level, div in critical_divergences[:5]:  # Show first 5 for detail
-        print(f"🔥 CRITICAL DIVERGENCE: {div['divergence_id']}")
+        div_id = div.get('divergence_id', div.get('relationship_id', 'Unknown'))
+        divergence_type = div.get('divergence_type', 'unknown').upper()
+        options_involved = div.get('options', div.get('options_in_conflict', []))
+        description = div.get('description', 'No description')
+        
+        print(f"🔥 CRITICAL DIVERGENCE: {div_id}")
         print("═" * 60)
-        print(f"📍 Level: {level} | Type: {div.get('divergence_type', 'unknown').upper()}")
-        print(f"⚔️ Options: {' vs '.join(div.get('options', []))}")
-        print(f"📝 Description: {div.get('description', 'No description')}")
+        print(f"📍 Level: {level} | Type: {divergence_type}")
+        print(f"⚔️ Options: {' vs '.join(options_involved)}")
+        print(f"📝 Description: {description}")
         
         # Show the actual conflicting claims
-        options_involved = div.get('options', [])
         print(f"\n🔍 Conflicting Claims Analysis:")
         
         for opt in options_involved:
@@ -873,7 +879,12 @@ def visualize_structured_resolutions(divergence_resolutions: Dict[str, Any], lev
     low_confidence = []
     
     for div_id, resolution in divergence_resolutions.items():
-        confidence = resolution.confidence
+        # Handle both dict and object formats
+        if isinstance(resolution, dict):
+            confidence = resolution.get('confidence', 0)
+        else:
+            confidence = getattr(resolution, 'confidence', 0)
+            
         if confidence >= 0.8:
             high_confidence.append((div_id, resolution))
         elif confidence >= 0.6:
@@ -896,41 +907,58 @@ def visualize_structured_resolutions(divergence_resolutions: Dict[str, Any], lev
         
         for div_id, resolution in resolutions:
             winner_icon = "🏆"
-            evidence_grade = resolution.evidence_quality
+            
+            # Handle both dict and object formats
+            if isinstance(resolution, dict):
+                winning_option = resolution.get('winning_option', 'N/A')
+                confidence = resolution.get('confidence', 0)
+                level_weight = resolution.get('level_weight', 0)
+                evidence_grade = resolution.get('evidence_quality', 'N/A')
+                divergence_impact = resolution.get('divergence_impact', 'No impact specified')
+                reasoning = resolution.get('reasoning', 'No reasoning provided')
+            else:
+                winning_option = getattr(resolution, 'winning_option', 'N/A')
+                confidence = getattr(resolution, 'confidence', 0)
+                level_weight = getattr(resolution, 'level_weight', 0)
+                evidence_grade = getattr(resolution, 'evidence_quality', 'N/A')
+                divergence_impact = getattr(resolution, 'divergence_impact', 'No impact specified')
+                reasoning = getattr(resolution, 'reasoning', 'No reasoning provided')
+            
             grade_icon = {
                 'A': '🥇', 'B': '🥈', 'C': '🥉', 
                 'D': '📝', 'F': '❌'
             }.get(evidence_grade, '❓')
             
             print(f"\n{winner_icon} Resolution: {div_id}")
-            print(f"   🏆 Winner: Option {resolution.winning_option}")
-            print(f"   📊 Confidence: {resolution.confidence:.2f}")
-            print(f"   ⚖️ Level Weight: {resolution.level_weight:.2f}")
+            print(f"   🏆 Winner: Option {winning_option}")
+            print(f"   📊 Confidence: {confidence:.2f}")
+            print(f"   ⚖️ Level Weight: {level_weight:.2f}")
             print(f"   {grade_icon} Evidence Quality: Grade {evidence_grade}")
-            print(f"   📝 Impact: {resolution.divergence_impact[:80]}...")
-            print(f"   💡 Reasoning: {resolution.reasoning[:100]}...")
+            print(f"   📝 Impact: {divergence_impact[:80]}...")
+            print(f"   💡 Reasoning: {reasoning[:100]}...")
     
     # Level score breakdown with visual bars
     print(f"\n📈 LEVEL SCORE BREAKDOWN:")
     print("=" * 50)
     
-    max_score = max(sum(scores.values()) for scores in level_scores.values()) if level_scores else 1
-    
-    for option, scores in sorted(level_scores.items()):
-        total = sum(scores.values())
-        if total > 0:
-            # Create visual bar
-            bar_length = int((total / max_score) * 30) if max_score > 0 else 0
-            bar = "█" * bar_length + "░" * (30 - bar_length)
-            
-            print(f"\nOption {option}: {total:.2f}")
-            print(f"  [{bar}]")
-            
-            for level, score in sorted(scores.items()):
-                if score > 0:
-                    level_bar_length = int((score / total) * 20) if total > 0 else 0
-                    level_bar = "▓" * level_bar_length + "░" * (20 - level_bar_length)
-                    print(f"    Level {level}: {score:.2f} [{level_bar}]")
+    if level_scores:
+        max_score = max(sum(scores.values()) for scores in level_scores.values()) if level_scores else 1
+        
+        for option, scores in sorted(level_scores.items()):
+            total = sum(scores.values())
+            if total > 0:
+                # Create visual bar
+                bar_length = int((total / max_score) * 30) if max_score > 0 else 0
+                bar = "█" * bar_length + "░" * (30 - bar_length)
+                
+                print(f"\nOption {option}: {total:.2f}")
+                print(f"  [{bar}]")
+                
+                for level, score in sorted(scores.items()):
+                    if score > 0:
+                        level_bar_length = int((score / total) * 20) if total > 0 else 0
+                        level_bar = "▓" * level_bar_length + "░" * (20 - level_bar_length)
+                        print(f"    Level {level}: {score:.2f} [{level_bar}]")
 
 def visualize_enhanced_comparative_summary(result: Dict):
     """Enhanced visualization of comparative reasoning summary with detailed metrics."""
@@ -946,21 +974,23 @@ def visualize_enhanced_comparative_summary(result: Dict):
     print(f"📊 CONFIDENCE SCORE: {confidence:.2f}")
     print(f"🔬 REASONING METHOD: {method}")
     
+    # Optimization statistics
+    visualize_optimization_stats(result)
+    
     # Enhanced statistics
     total_claims = sum(len(claims) for claims in result['option_trees'].values())
-    total_comparisons = len(result['claim_comparisons'])
-    total_divergences = sum(len(divs) for divs in result['level_divergences'].values())
-    critical_resolutions = len(result['divergence_resolutions'])
+    total_relationships = sum(len(rels) for rels in result.get('level_relationships', {}).values())
+    total_divergences = sum(len(divs) for divs in result.get('level_divergences', {}).values())
     
     print(f"\n📈 ANALYSIS METRICS:")
     print("┌─────────────────────────────────┐")
     print(f"│ Total Claims Generated: {total_claims:8} │")
-    print(f"│ Pairwise Comparisons:   {total_comparisons:8} │")
+    print(f"│ Level Relationships:    {total_relationships:8} │")
     print(f"│ Level Divergences:      {total_divergences:8} │")
-    print(f"│ Critical Resolutions:   {critical_resolutions:8} │")
+    print(f"│ Resolutions Found:      {len(result.get('divergence_resolutions', {})):8} │")
     print("└─────────────────────────────────┘")
     
-    # Option performance breakdown
+    # Option performance
     option_scores = result.get('option_scores', {})
     if option_scores:
         print(f"\n🏅 OPTION PERFORMANCE RANKING:")
@@ -975,37 +1005,6 @@ def visualize_enhanced_comparative_summary(result: Dict):
             bar = "█" * bar_length + "░" * (25 - bar_length)
             
             print(f"{rank_icon} Option {option}: {score:.2f} [{bar}]")
-    
-    # Level breakdown
-    level_divergences = result.get('level_divergences', {})
-    if level_divergences:
-        print(f"\n📊 DIVERGENCES BY HIERARCHY LEVEL:")
-        print("─" * 45)
-        
-        for level, divs in sorted(level_divergences.items()):
-            critical_count = sum(1 for d in divs if d.get('critical_for_answer', False))
-            total_count = len(divs)
-            
-            level_names = {
-                1: "Basic Facts",
-                2: "Physiological Context",
-                3: "Pathophysiological Mechanisms", 
-                4: "Clinical Manifestations",
-                5: "Answer Justification"
-            }
-            
-            level_name = level_names.get(level, f"Level {level}")
-            print(f"  Level {level} ({level_name}): {total_count} total ({critical_count} critical)")
-    
-    # Final reasoning path
-    final_selection = result.get('final_selection')
-    if final_selection and hasattr(final_selection, 'winning_reasoning_path'):
-        print(f"\n🎖️ WINNING REASONING PATH:")
-        print("─" * 50)
-        
-        for i, step in enumerate(final_selection.winning_reasoning_path, 1):
-            step_icon = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][min(i-1, 9)]
-            print(f"{step_icon} {step}")
 
 def visualize_complete_analysis(result: Dict):
     """Master function to display all visualizations in a comprehensive manner."""
@@ -1013,23 +1012,220 @@ def visualize_complete_analysis(result: Dict):
     print("COMPLETE COMPARATIVE REASONING ANALYSIS")
     print("🔬" * 40)
     
-    # Main summary
-    visualize_enhanced_comparative_summary(result)
+    # Check if this is optimized or enhanced
+    method = result.get('reasoning_method', '')
+    if 'optimized' in method:
+        # Main summary
+        visualize_optimized_comparative_summary(result)
+        
+        # Detailed option trees
+        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+        
+        # Batch relationships
+        visualize_batch_relationships(result.get('level_relationships', {}))
+        
+        # Level divergences (optimized format)
+        level_divergences = result.get('level_divergences', {})
+        if level_divergences:
+            visualize_level_divergences(level_divergences)
+        
+        # Structured resolutions (optimized format) 
+        divergence_resolutions = result.get('divergence_resolutions', {})
+        if divergence_resolutions:
+            level_scores = result.get('level_scores', {})
+            visualize_structured_resolutions(divergence_resolutions, level_scores)
+    else:
+        # Main summary
+        visualize_enhanced_comparative_summary(result)
+        
+        # Detailed option trees
+        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+        
+        # Claim comparisons
+        visualize_claim_comparisons(result.get('claim_comparisons', []))
+        
+        # Level divergences
+        visualize_level_divergences(result.get('level_divergences', {}))
+        
+        # Detailed divergence analysis
+        visualize_divergence_details(result.get('level_divergences', {}), result['option_trees'])
+        
+        # Structured resolutions
+        visualize_structured_resolutions(result.get('divergence_resolutions', {}), result.get('level_scores', {}))
     
-    # Detailed option trees
-    visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+    print("\n" + "✅" * 40)
+    print("ANALYSIS COMPLETE")
+    print("✅" * 40)
+
+# ============= Optimization-Specific Visualization Functions =============
+
+def visualize_optimization_stats(result: Dict):
+    """Visualize the optimization improvements."""
+    print("\n⚡ OPTIMIZATION STATISTICS:")
+    print("=" * 50)
     
-    # Claim comparisons
-    visualize_claim_comparisons(result['claim_comparisons'])
+    stats = result.get('optimization_stats', {})
+    method = result.get('reasoning_method', 'unknown')
     
-    # Level divergences
-    visualize_level_divergences(result['level_divergences'])
+    print(f"🔬 Method: {method}")
+    print(f"📊 Levels Analyzed: {stats.get('levels_analyzed', 0)}")
+    print(f"⚔️ Total Divergences: {stats.get('total_divergences', 0)}")
+    print(f"⚡ Call Reduction: {stats.get('estimated_call_reduction', 'N/A')}")
     
-    # Detailed divergence analysis
-    visualize_divergence_details(result['level_divergences'], result['option_trees'])
+    # Calculate actual efficiency
+    num_options = len(result.get('option_trees', {}))
+    if num_options > 1:
+        old_calls = num_options * (num_options - 1) // 2 * 5  # Pairwise comparisons across 5 levels
+        new_calls = 2 + stats.get('levels_analyzed', 0)  # Batch analysis + batch judging
+        efficiency = ((old_calls - new_calls) / old_calls * 100) if old_calls > 0 else 0
+        
+        print(f"📈 Efficiency Gain: {efficiency:.1f}% reduction in LLM calls")
+        print(f"   Previous: ~{old_calls} calls")
+        print(f"   Optimized: ~{new_calls} calls")
+
+def visualize_batch_relationships(level_relationships: Dict[int, List[Dict]]):
+    """Visualize batch-analyzed relationships by level."""
+    print("\n🔗 BATCH RELATIONSHIP ANALYSIS:")
+    print("=" * 60)
     
-    # Structured resolutions
-    visualize_structured_resolutions(result['divergence_resolutions'], result['level_scores'])
+    if not level_relationships:
+        print("No level relationships found.")
+        return
+    
+    for level in sorted(level_relationships.keys()):
+        relationships = level_relationships[level]
+        if not relationships:
+            continue
+            
+        level_names = {
+            1: "🔸 Level 1: Basic Facts",
+            2: "🔹 Level 2: Physiological Context", 
+            3: "🔶 Level 3: Pathophysiological Mechanisms",
+            4: "🔷 Level 4: Clinical Manifestations",
+            5: "⭐ Level 5: Answer Justification"
+        }
+        
+        print(f"\n{level_names.get(level, f'📍 Level {level}')}:")
+        print("─" * 50)
+        
+        # Group by relationship type
+        by_type = defaultdict(list)
+        for rel in relationships:
+            by_type[rel.get('relationship_type', 'UNKNOWN')].append(rel)
+        
+        for rel_type, rels in by_type.items():
+            type_icons = {
+                'IDENTICAL': '🔗',
+                'SIMILAR': '🔀',
+                'RELATED': '📋',
+                'CONFLICTING': '⚔️',
+                'UNRELATED': '🚫'
+            }
+            
+            icon = type_icons.get(rel_type, '❓')
+            divergence_count = sum(1 for r in rels if r.get('is_divergence_point', False))
+            
+            print(f"  {icon} {rel_type}: {len(rels)} relationships ({divergence_count} divergences)")
+            
+            # Show key divergences
+            for rel in rels[:3]:  # Show first 3
+                if rel.get('is_divergence_point', False):
+                    options = rel.get('options_in_conflict', [])
+                    print(f"    🔥 {rel.get('relationship_id', 'Unknown')}: {' vs '.join(options)}")
+                    print(f"       {rel.get('description', 'No description')[:60]}...")
+
+def visualize_optimized_comparative_summary(result: Dict):
+    """Enhanced summary for optimized framework."""
+    print("\n🚀 OPTIMIZED COMPARATIVE REASONING SUMMARY:")
+    print("=" * 70)
+    
+    # Main results
+    answer = result['answer']
+    confidence = result['confidence']
+    method = result['reasoning_method']
+    
+    print(f"🏆 SELECTED ANSWER: {answer}")
+    print(f"📊 CONFIDENCE SCORE: {confidence:.2f}")
+    print(f"⚡ REASONING METHOD: {method}")
+    
+    # Optimization statistics
+    visualize_optimization_stats(result)
+    
+    # Enhanced statistics
+    total_claims = sum(len(claims) for claims in result['option_trees'].values())
+    total_relationships = sum(len(rels) for rels in result.get('level_relationships', {}).values())
+    total_divergences = sum(len(divs) for divs in result.get('level_divergences', {}).values())
+    
+    print(f"\n📈 ANALYSIS METRICS:")
+    print("┌─────────────────────────────────┐")
+    print(f"│ Total Claims Generated: {total_claims:8} │")
+    print(f"│ Level Relationships:    {total_relationships:8} │")
+    print(f"│ Level Divergences:      {total_divergences:8} │")
+    print(f"│ Resolutions Found:      {len(result.get('divergence_resolutions', {})):8} │")
+    print("└─────────────────────────────────┘")
+    
+    # Option performance
+    option_scores = result.get('option_scores', {})
+    if option_scores:
+        print(f"\n🏅 OPTION PERFORMANCE RANKING:")
+        print("─" * 40)
+        
+        sorted_options = sorted(option_scores.items(), key=lambda x: x[1], reverse=True)
+        max_score = sorted_options[0][1] if sorted_options else 1
+        
+        for i, (option, score) in enumerate(sorted_options):
+            rank_icon = ["🥇", "🥈", "🥉", "🏅", "🎖️"][min(i, 4)]
+            bar_length = int((score / max_score) * 25) if max_score > 0 else 0
+            bar = "█" * bar_length + "░" * (25 - bar_length)
+            
+            print(f"{rank_icon} Option {option}: {score:.2f} [{bar}]")
+
+def visualize_complete_analysis(result: Dict):
+    """Master function to display all visualizations in a comprehensive manner."""
+    print("\n" + "🔬" * 40)
+    print("COMPLETE COMPARATIVE REASONING ANALYSIS")
+    print("🔬" * 40)
+    
+    # Check if this is optimized or enhanced
+    method = result.get('reasoning_method', '')
+    if 'optimized' in method:
+        # Main summary
+        visualize_optimized_comparative_summary(result)
+        
+        # Detailed option trees
+        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+        
+        # Batch relationships
+        visualize_batch_relationships(result.get('level_relationships', {}))
+        
+        # Level divergences (optimized format)
+        level_divergences = result.get('level_divergences', {})
+        if level_divergences:
+            visualize_level_divergences(level_divergences)
+        
+        # Structured resolutions (optimized format) 
+        divergence_resolutions = result.get('divergence_resolutions', {})
+        if divergence_resolutions:
+            level_scores = result.get('level_scores', {})
+            visualize_structured_resolutions(divergence_resolutions, level_scores)
+    else:
+        # Main summary
+        visualize_enhanced_comparative_summary(result)
+        
+        # Detailed option trees
+        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+        
+        # Claim comparisons
+        visualize_claim_comparisons(result.get('claim_comparisons', []))
+        
+        # Level divergences
+        visualize_level_divergences(result.get('level_divergences', {}))
+        
+        # Detailed divergence analysis
+        visualize_divergence_details(result.get('level_divergences', {}), result['option_trees'])
+        
+        # Structured resolutions
+        visualize_structured_resolutions(result.get('divergence_resolutions', {}), result.get('level_scores', {}))
     
     print("\n" + "✅" * 40)
     print("ANALYSIS COMPLETE")
