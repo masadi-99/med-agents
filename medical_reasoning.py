@@ -631,16 +631,20 @@ class EnhancedComparativeReasoningSolver(dspy.Module):
 # ============= Enhanced Visualization Functions =============
 
 def visualize_enhanced_option_trees(option_trees: Dict[str, List[Dict]], option_analyses: Dict[str, Dict]):
-    """Enhanced visualization of option trees with better structure."""
+    """Enhanced visualization of option trees with beautiful structure and detailed information."""
     print("\n🌳 ENHANCED OPTION REASONING TREES:")
-    print("=" * 70)
+    print("=" * 80)
     
     for option_letter, claims in option_trees.items():
         analysis = option_analyses[option_letter]
-        print(f"\n📋 OPTION {option_letter} DETAILED TREE:")
-        print("-" * 50)
-        print(f"Clinical Context: {analysis['clinical_context']}")
-        print(f"Pathophysiology: {analysis['pathophysiology_explanation'][:100]}...")
+        
+        # Header with option details
+        print(f"\n📋 OPTION {option_letter} DETAILED REASONING TREE")
+        print("─" * 60)
+        print(f"🎯 Clinical Context: {analysis['clinical_context'][:120]}...")
+        print(f"🧠 Pathophysiology: {analysis['pathophysiology_explanation'][:120]}...")
+        print(f"⚙️  Supporting Mechanisms: {', '.join(analysis['supporting_mechanisms'][:2])}...")
+        print(f"📊 Total Claims: {len(claims)}")
         
         # Group by hierarchy level
         levels = defaultdict(list)
@@ -649,27 +653,121 @@ def visualize_enhanced_option_trees(option_trees: Dict[str, List[Dict]], option_
             levels[level].append(claim)
         
         level_names = {
-            1: "🔸 Level 1: Basic Facts",
-            2: "🔹 Level 2: Physiological Context", 
-            3: "🔶 Level 3: Pathophysiological Mechanisms",
-            4: "🔷 Level 4: Clinical Manifestations",
-            5: "⭐ Level 5: Answer Justification"
+            1: "🔸 Level 1: Basic Facts & Patient Data",
+            2: "🔹 Level 2: Physiological Context & Normal Function", 
+            3: "🔶 Level 3: Pathophysiological Mechanisms & Disease Process",
+            4: "🔷 Level 4: Clinical Manifestations & Symptoms",
+            5: "⭐ Level 5: Answer Justification & Final Reasoning"
         }
         
         for level in sorted(levels.keys()):
             if level > 0:
-                print(f"\n{level_names.get(level, f'Level {level}')}:")
-                for claim in levels[level]:
-                    status_icon = "✅" if claim.get('truth_status') == 'VERIFIED' else "⚠️"
-                    relevance_icon = "🎯" if claim.get('clinical_relevance') == 'RELEVANT' else "📍"
-                    print(f"    {status_icon}{relevance_icon} {claim['claim_id']}: {claim['statement'][:80]}...")
+                print(f"\n{level_names.get(level, f'📍 Level {level}')}:")
+                print("┌" + "─" * 70 + "┐")
+                
+                for i, claim in enumerate(levels[level]):
+                    # Status and relevance indicators
+                    truth_status = claim.get('truth_status', 'UNKNOWN')
+                    clinical_relevance = claim.get('clinical_relevance', 'UNKNOWN')
+                    
+                    status_icon = {
+                        'VERIFIED': '✅',
+                        'VERIFIED_WITH_CONTEXT': '🟢',
+                        'PARTIALLY_VERIFIED': '🟡',
+                        'UNVERIFIED': '⚠️',
+                        'CONTRADICTED': '❌'
+                    }.get(truth_status, '❓')
+                    
+                    relevance_icon = {
+                        'RELEVANT': '🎯',
+                        'PARTIALLY_RELEVANT': '📍',
+                        'IRRELEVANT': '🔘'
+                    }.get(clinical_relevance, '❓')
+                    
+                    confidence_icon = {
+                        'HIGH': '🔥',
+                        'MODERATE': '🔶',
+                        'LOW': '🔸'
+                    }.get(claim.get('confidence', 'UNKNOWN'), '❓')
+                    
+                    # Claim display
+                    claim_id = claim['claim_id']
+                    statement = claim['statement']
+                    
+                    print(f"│ {status_icon}{relevance_icon}{confidence_icon} {claim_id}: {statement[:55]}...")
+                    
+                    # Additional details
                     if claim.get('depends_on'):
-                        print(f"      ← Depends: {claim['depends_on']}")
+                        deps = ', '.join(claim['depends_on'])
+                        print(f"│   🔗 Dependencies: {deps}")
+                    
+                    if claim.get('verification_explanation'):
+                        explanation = claim['verification_explanation'][:60]
+                        print(f"│   💭 Verification: {explanation}...")
+                    
+                    if claim.get('reasoning_bridge'):
+                        bridge = claim['reasoning_bridge'][:60]
+                        print(f"│   🌉 Bridge: {bridge}...")
+                    
+                    # Separator between claims
+                    if i < len(levels[level]) - 1:
+                        print("│" + "─" * 70)
+                
+                print("└" + "─" * 70 + "┘")
+
+def visualize_claim_comparisons(claim_comparisons: List):
+    """Beautiful visualization of claim comparisons across options."""
+    print("\n🔍 DETAILED CLAIM COMPARISONS:")
+    print("=" * 80)
+    
+    if not claim_comparisons:
+        print("No claim comparisons found.")
+        return
+    
+    # Group by similarity type
+    similarity_groups = defaultdict(list)
+    for comp in claim_comparisons:
+        similarity_groups[comp.similarity.value].append(comp)
+    
+    similarity_icons = {
+        'IDENTICAL': '🔗',
+        'SIMILAR': '🔀',
+        'RELATED': '📋',
+        'CONFLICTING': '⚔️',
+        'UNRELATED': '🚫'
+    }
+    
+    for similarity, comparisons in similarity_groups.items():
+        if not comparisons:
+            continue
+            
+        icon = similarity_icons.get(similarity, '❓')
+        print(f"\n{icon} {similarity} COMPARISONS ({len(comparisons)} total):")
+        print("─" * 60)
+        
+        for i, comp in enumerate(comparisons[:10]):  # Show first 10 to avoid overwhelming
+            divergence_status = "🔥 DIVERGENCE POINT" if comp.divergence_point else "📍 Similarity Point"
+            
+            print(f"\n📊 Comparison #{i+1}: Options {comp.option1} vs {comp.option2}")
+            print(f"   Status: {divergence_status}")
+            print(f"   Level: {comp.level} | Similarity: {comp.similarity.value}")
+            print(f"   Claims: {comp.claim1_id} ↔ {comp.claim2_id}")
+            print(f"   Notes: {comp.comparison_notes[:80]}...")
+            
+            if i < len(comparisons) - 1:
+                print("   " + "─" * 50)
+        
+        if len(comparisons) > 10:
+            print(f"\n   ... and {len(comparisons) - 10} more {similarity.lower()} comparisons")
 
 def visualize_level_divergences(level_divergences: Dict[int, List[Dict]]):
-    """Visualize divergences organized by hierarchy level."""
+    """Enhanced visualization of divergences organized by hierarchy level."""
     print("\n📊 LEVEL-BASED DIVERGENCE ANALYSIS:")
-    print("=" * 60)
+    print("=" * 80)
+    
+    if not level_divergences:
+        print("No level divergences found.")
+        return
     
     level_names = {
         1: "🔸 Level 1: Basic Facts Divergences",
@@ -679,82 +777,260 @@ def visualize_level_divergences(level_divergences: Dict[int, List[Dict]]):
         5: "⭐ Level 5: Answer Justification Divergences"
     }
     
+    total_divergences = sum(len(divs) for divs in level_divergences.values())
+    critical_divergences = sum(sum(1 for d in divs if d.get('critical_for_answer', False)) for divs in level_divergences.values())
+    
+    print(f"📈 Overview: {total_divergences} total divergences, {critical_divergences} critical for answer")
+    
     for level in sorted(level_divergences.keys()):
         divergences = level_divergences[level]
-        if divergences:
-            print(f"\n{level_names.get(level, f'Level {level} Divergences')}:")
-            print("-" * 50)
+        if not divergences:
+            continue
             
-            for div in divergences:
-                critical_icon = "🔥" if div.get('critical_for_answer', False) else "⚠️"
-                print(f"\n{critical_icon} {div['divergence_id']} ({div['divergence_type']}):")
-                print(f"  Options: {div['options']}")
-                print(f"  Description: {div['description']}")
-                print(f"  Claim Pairs: {len(div['claim_pairs'])} pairs")
+        print(f"\n{level_names.get(level, f'📍 Level {level} Divergences')}:")
+        print("┌" + "═" * 70 + "┐")
+        
+        for i, div in enumerate(divergences):
+            critical_icon = "🔥" if div.get('critical_for_answer', False) else "⚠️"
+            divergence_type = div.get('divergence_type', 'unknown').upper()
+            
+            type_icons = {
+                'MECHANISM': '⚙️',
+                'ASSUMPTION': '💭',
+                'INTERPRETATION': '🧠',
+                'FACTUAL': '📋',
+                'CONFLICTING': '⚔️',
+                'BASIC_CONFLICT': '🔄',
+                'UNKNOWN': '❓'
+            }
+            
+            type_icon = type_icons.get(divergence_type, '❓')
+            
+            print(f"│ {critical_icon} {type_icon} {div['divergence_id']} ({divergence_type})")
+            print(f"│ ├─ Options Involved: {' vs '.join(div.get('options', []))}")
+            print(f"│ ├─ Claim Pairs: {len(div.get('claim_pairs', []))} pairs")
+            print(f"│ └─ Description: {div.get('description', 'No description')[:60]}...")
+            
+            if i < len(divergences) - 1:
+                print("│" + "─" * 70)
+        
+        print("└" + "═" * 70 + "┘")
+
+def visualize_divergence_details(level_divergences: Dict[int, List[Dict]], option_trees: Dict[str, List[Dict]]):
+    """Detailed visualization of specific divergence points with claim details."""
+    print("\n🔍 DETAILED DIVERGENCE ANALYSIS:")
+    print("=" * 80)
+    
+    critical_divergences = []
+    for level, divs in level_divergences.items():
+        for div in divs:
+            if div.get('critical_for_answer', False):
+                critical_divergences.append((level, div))
+    
+    if not critical_divergences:
+        print("No critical divergences found.")
+        return
+    
+    print(f"📊 Analyzing {len(critical_divergences)} critical divergences in detail:\n")
+    
+    for level, div in critical_divergences[:5]:  # Show first 5 for detail
+        print(f"🔥 CRITICAL DIVERGENCE: {div['divergence_id']}")
+        print("═" * 60)
+        print(f"📍 Level: {level} | Type: {div.get('divergence_type', 'unknown').upper()}")
+        print(f"⚔️ Options: {' vs '.join(div.get('options', []))}")
+        print(f"📝 Description: {div.get('description', 'No description')}")
+        
+        # Show the actual conflicting claims
+        options_involved = div.get('options', [])
+        print(f"\n🔍 Conflicting Claims Analysis:")
+        
+        for opt in options_involved:
+            if opt in option_trees:
+                level_claims = [c for c in option_trees[opt] if c.get('hierarchy_level', 1) == level]
+                if level_claims:
+                    claim = level_claims[0]  # Take first claim at this level
+                    status_icon = "✅" if claim.get('truth_status') == 'VERIFIED' else "⚠️"
+                    
+                    print(f"\n   {status_icon} Option {opt} Position:")
+                    print(f"      Claim: {claim.get('statement', 'No statement')[:100]}...")
+                    print(f"      Evidence: Grade {claim.get('evidence_quality', 'N/A')}")
+                    print(f"      Confidence: {claim.get('confidence', 'N/A')}")
+        
+        print("\n" + "─" * 60 + "\n")
 
 def visualize_structured_resolutions(divergence_resolutions: Dict[str, Any], level_scores: Dict[str, Dict[int, float]]):
-    """Visualize structured divergence resolutions with level analysis."""
+    """Enhanced visualization of structured divergence resolutions with detailed analysis."""
     print("\n🏛️ STRUCTURED DIVERGENCE RESOLUTIONS:")
-    print("=" * 60)
+    print("=" * 80)
     
-    # Group by level
-    level_resolutions = defaultdict(list)
+    if not divergence_resolutions:
+        print("No divergence resolutions found.")
+        return
+    
+    # Group by confidence level
+    high_confidence = []
+    medium_confidence = []
+    low_confidence = []
+    
     for div_id, resolution in divergence_resolutions.items():
-        level = resolution.level_weight if hasattr(resolution, 'level_weight') else 1
-        level_resolutions[level].append((div_id, resolution))
+        confidence = resolution.confidence
+        if confidence >= 0.8:
+            high_confidence.append((div_id, resolution))
+        elif confidence >= 0.6:
+            medium_confidence.append((div_id, resolution))
+        else:
+            low_confidence.append((div_id, resolution))
     
-    for level in sorted(level_resolutions.keys()):
-        resolutions = level_resolutions[level]
-        if resolutions:
-            print(f"\nLevel {level} Resolutions:")
-            print("-" * 30)
+    confidence_groups = [
+        ("🔥 HIGH CONFIDENCE RESOLUTIONS", high_confidence),
+        ("🔶 MEDIUM CONFIDENCE RESOLUTIONS", medium_confidence),
+        ("🔸 LOW CONFIDENCE RESOLUTIONS", low_confidence)
+    ]
+    
+    for group_name, resolutions in confidence_groups:
+        if not resolutions:
+            continue
             
-            for div_id, resolution in resolutions:
-                print(f"\n{div_id}:")
-                print(f"  🏆 Winner: Option {resolution.winning_option}")
-                print(f"  📊 Confidence: {resolution.confidence:.2f}")
-                print(f"  ⚖️ Level Weight: {resolution.level_weight:.2f}")
-                print(f"  📝 Impact: {resolution.divergence_impact}")
-                print(f"  💡 Reasoning: {resolution.reasoning[:100]}...")
+        print(f"\n{group_name} ({len(resolutions)} total):")
+        print("─" * 60)
+        
+        for div_id, resolution in resolutions:
+            winner_icon = "🏆"
+            evidence_grade = resolution.evidence_quality
+            grade_icon = {
+                'A': '🥇', 'B': '🥈', 'C': '🥉', 
+                'D': '📝', 'F': '❌'
+            }.get(evidence_grade, '❓')
+            
+            print(f"\n{winner_icon} Resolution: {div_id}")
+            print(f"   🏆 Winner: Option {resolution.winning_option}")
+            print(f"   📊 Confidence: {resolution.confidence:.2f}")
+            print(f"   ⚖️ Level Weight: {resolution.level_weight:.2f}")
+            print(f"   {grade_icon} Evidence Quality: Grade {evidence_grade}")
+            print(f"   📝 Impact: {resolution.divergence_impact[:80]}...")
+            print(f"   💡 Reasoning: {resolution.reasoning[:100]}...")
     
+    # Level score breakdown with visual bars
     print(f"\n📈 LEVEL SCORE BREAKDOWN:")
-    print("-" * 40)
-    for option, scores in level_scores.items():
-        if any(scores.values()):
-            total = sum(scores.values())
-            print(f"\nOption {option} (Total: {total:.2f}):")
+    print("=" * 50)
+    
+    max_score = max(sum(scores.values()) for scores in level_scores.values()) if level_scores else 1
+    
+    for option, scores in sorted(level_scores.items()):
+        total = sum(scores.values())
+        if total > 0:
+            # Create visual bar
+            bar_length = int((total / max_score) * 30) if max_score > 0 else 0
+            bar = "█" * bar_length + "░" * (30 - bar_length)
+            
+            print(f"\nOption {option}: {total:.2f}")
+            print(f"  [{bar}]")
+            
             for level, score in sorted(scores.items()):
                 if score > 0:
-                    print(f"  Level {level}: {score:.2f}")
+                    level_bar_length = int((score / total) * 20) if total > 0 else 0
+                    level_bar = "▓" * level_bar_length + "░" * (20 - level_bar_length)
+                    print(f"    Level {level}: {score:.2f} [{level_bar}]")
 
 def visualize_enhanced_comparative_summary(result: Dict):
-    """Enhanced visualization of comparative reasoning summary."""
+    """Enhanced visualization of comparative reasoning summary with detailed metrics."""
     print("\n🎯 ENHANCED COMPARATIVE REASONING SUMMARY:")
-    print("=" * 70)
+    print("=" * 80)
     
-    print(f"🏆 Selected Answer: {result['answer']}")
-    print(f"📊 Confidence: {result['confidence']:.2f}")
-    print(f"🔬 Method: {result['reasoning_method']}")
+    # Main results
+    answer = result['answer']
+    confidence = result['confidence']
+    method = result['reasoning_method']
+    
+    print(f"🏆 SELECTED ANSWER: {answer}")
+    print(f"📊 CONFIDENCE SCORE: {confidence:.2f}")
+    print(f"🔬 REASONING METHOD: {method}")
     
     # Enhanced statistics
     total_claims = sum(len(claims) for claims in result['option_trees'].values())
     total_comparisons = len(result['claim_comparisons'])
     total_divergences = sum(len(divs) for divs in result['level_divergences'].values())
+    critical_resolutions = len(result['divergence_resolutions'])
     
-    print(f"\n📈 ENHANCED ANALYSIS STATISTICS:")
-    print(f"  • Total Claims Generated: {total_claims}")
-    print(f"  • Pairwise Comparisons: {total_comparisons}")
-    print(f"  • Divergences by Level: {total_divergences}")
-    print(f"  • Critical Resolutions: {len(result['divergence_resolutions'])}")
+    print(f"\n📈 ANALYSIS METRICS:")
+    print("┌─────────────────────────────────┐")
+    print(f"│ Total Claims Generated: {total_claims:8} │")
+    print(f"│ Pairwise Comparisons:   {total_comparisons:8} │")
+    print(f"│ Level Divergences:      {total_divergences:8} │")
+    print(f"│ Critical Resolutions:   {critical_resolutions:8} │")
+    print("└─────────────────────────────────┘")
+    
+    # Option performance breakdown
+    option_scores = result.get('option_scores', {})
+    if option_scores:
+        print(f"\n🏅 OPTION PERFORMANCE RANKING:")
+        print("─" * 40)
+        
+        sorted_options = sorted(option_scores.items(), key=lambda x: x[1], reverse=True)
+        max_score = sorted_options[0][1] if sorted_options else 1
+        
+        for i, (option, score) in enumerate(sorted_options):
+            rank_icon = ["🥇", "🥈", "🥉", "🏅", "🎖️"][min(i, 4)]
+            bar_length = int((score / max_score) * 25) if max_score > 0 else 0
+            bar = "█" * bar_length + "░" * (25 - bar_length)
+            
+            print(f"{rank_icon} Option {option}: {score:.2f} [{bar}]")
     
     # Level breakdown
-    print(f"\n📊 Divergences by Hierarchy Level:")
-    for level, divs in result['level_divergences'].items():
-        critical_count = sum(1 for d in divs if d.get('critical_for_answer', False))
-        print(f"  Level {level}: {len(divs)} total ({critical_count} critical)")
+    level_divergences = result.get('level_divergences', {})
+    if level_divergences:
+        print(f"\n📊 DIVERGENCES BY HIERARCHY LEVEL:")
+        print("─" * 45)
+        
+        for level, divs in sorted(level_divergences.items()):
+            critical_count = sum(1 for d in divs if d.get('critical_for_answer', False))
+            total_count = len(divs)
+            
+            level_names = {
+                1: "Basic Facts",
+                2: "Physiological Context",
+                3: "Pathophysiological Mechanisms", 
+                4: "Clinical Manifestations",
+                5: "Answer Justification"
+            }
+            
+            level_name = level_names.get(level, f"Level {level}")
+            print(f"  Level {level} ({level_name}): {total_count} total ({critical_count} critical)")
     
     # Final reasoning path
-    if result.get('final_selection') and hasattr(result['final_selection'], 'winning_reasoning_path'):
-        print(f"\n🎖️ Winning Reasoning Path:")
-        for i, step in enumerate(result['final_selection'].winning_reasoning_path, 1):
-            print(f"  {i}. {step}") 
+    final_selection = result.get('final_selection')
+    if final_selection and hasattr(final_selection, 'winning_reasoning_path'):
+        print(f"\n🎖️ WINNING REASONING PATH:")
+        print("─" * 50)
+        
+        for i, step in enumerate(final_selection.winning_reasoning_path, 1):
+            step_icon = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][min(i-1, 9)]
+            print(f"{step_icon} {step}")
+
+def visualize_complete_analysis(result: Dict):
+    """Master function to display all visualizations in a comprehensive manner."""
+    print("\n" + "🔬" * 40)
+    print("COMPLETE COMPARATIVE REASONING ANALYSIS")
+    print("🔬" * 40)
+    
+    # Main summary
+    visualize_enhanced_comparative_summary(result)
+    
+    # Detailed option trees
+    visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+    
+    # Claim comparisons
+    visualize_claim_comparisons(result['claim_comparisons'])
+    
+    # Level divergences
+    visualize_level_divergences(result['level_divergences'])
+    
+    # Detailed divergence analysis
+    visualize_divergence_details(result['level_divergences'], result['option_trees'])
+    
+    # Structured resolutions
+    visualize_structured_resolutions(result['divergence_resolutions'], result['level_scores'])
+    
+    print("\n" + "✅" * 40)
+    print("ANALYSIS COMPLETE")
+    print("✅" * 40) 

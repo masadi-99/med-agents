@@ -7,13 +7,16 @@ from config import OPENAI_API_KEY
 from medical_reasoning import (
     EnhancedComparativeReasoningSolver,
     visualize_enhanced_option_trees,
+    visualize_claim_comparisons,
     visualize_level_divergences,
+    visualize_divergence_details,
     visualize_structured_resolutions,
-    visualize_enhanced_comparative_summary
+    visualize_enhanced_comparative_summary,
+    visualize_complete_analysis
 )
 
-def test_enhanced_comparative_reasoning():
-    """Test the enhanced comparative reasoning solver."""
+def test_enhanced_comparative_reasoning(detailed=True):
+    """Test the enhanced comparative reasoning solver with beautiful visualizations."""
     
     # Configure DSPy with OpenAI
     lm = dspy.LM(
@@ -44,18 +47,20 @@ def test_enhanced_comparative_reasoning():
         # Get enhanced comparative analysis
         result = solver(question=question, options=options)
         
-        # Enhanced Visualizations
-        print("\n" + "="*80)
-        print("ENHANCED COMPARATIVE REASONING ANALYSIS")
-        print("="*80)
-        
-        visualize_enhanced_comparative_summary(result)
-        
-        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
-        
-        visualize_level_divergences(result['level_divergences'])
-        
-        visualize_structured_resolutions(result['divergence_resolutions'], result['level_scores'])
+        if detailed:
+            # Complete analysis with all visualizations
+            visualize_complete_analysis(result)
+        else:
+            # Standard visualizations
+            print("\n" + "="*80)
+            print("ENHANCED COMPARATIVE REASONING ANALYSIS")
+            print("="*80)
+            
+            visualize_enhanced_comparative_summary(result)
+            visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
+            visualize_claim_comparisons(result['claim_comparisons'])
+            visualize_level_divergences(result['level_divergences'])
+            visualize_structured_resolutions(result['divergence_resolutions'], result['level_scores'])
         
         return result
         
@@ -74,8 +79,10 @@ def demo_enhanced_features():
     print("  ✨ Pairwise Claim Matching - More precise than global matching")
     print("  📊 Level-Based Divergence Analysis - Structured by reasoning hierarchy")
     print("  ⚖️ Weighted Scoring System - Level-aware importance weighting")
-    print("  🎨 Enhanced Visualization - Clear structured display")
+    print("  🎨 Enhanced Visualization - Beautiful structured display")
     print("  🧠 Structured Judgment - Context-aware divergence resolution")
+    print("  🔍 Detailed Claim Trees - Comprehensive claim visualization")
+    print("  📈 Performance Analytics - Visual scoring and ranking")
     print()
     print("🏗️ Framework Architecture:")
     print("  1️⃣ Option-Specific Analysis - Generate separate trees for each option")
@@ -85,12 +92,13 @@ def demo_enhanced_features():
     print("  5️⃣ Structured Judgment - Resolve divergences with level weighting")
     print("  6️⃣ Final Answer Selection - Comprehensive decision making")
     print()
-    print("📈 Improvements over Original:")
-    print("  • Better claim matching accuracy")
-    print("  • Hierarchy-aware conflict resolution")
-    print("  • Weighted scoring by reasoning level")
-    print("  • More transparent decision process")
-    print("  • Reduced complexity and better focus")
+    print("🎨 Enhanced Visualizations:")
+    print("  • Beautiful claim trees with status indicators")
+    print("  • Detailed claim comparisons by similarity type")
+    print("  • Level-based divergence analysis with icons")
+    print("  • Conflict resolution with confidence grouping")
+    print("  • Visual score bars and performance ranking")
+    print("  • Complete reasoning path display")
 
 def simple_test():
     """Run a simple test with minimal output."""
@@ -128,6 +136,46 @@ def simple_test():
         print(f"❌ Error: {str(e)}")
         return False
 
+def test_visualization_demo():
+    """Demo just the visualization capabilities with a quick test."""
+    print("🎨 VISUALIZATION DEMO - Enhanced Framework")
+    print("-" * 50)
+    
+    # Configure DSPy
+    lm = dspy.LM(
+        model="openai/gpt-4o-mini",
+        api_key=OPENAI_API_KEY,
+        cache=False,
+        temperature=0.1
+    )
+    dspy.configure(lm=lm)
+    
+    solver = EnhancedComparativeReasoningSolver()
+    
+    # Simple medical question for quick demo
+    question = "A patient presents with chest pain and elevated troponin. What is the most likely diagnosis?"
+    options = {
+        "A": "Myocardial infarction",
+        "B": "Pulmonary embolism",
+        "C": "Aortic dissection"
+    }
+    
+    try:
+        result = solver(question=question, options=options)
+        
+        print("\n🎨 DEMONSTRATING ENHANCED VISUALIZATIONS:")
+        print("=" * 60)
+        
+        # Show just the key visualizations
+        visualize_enhanced_comparative_summary(result)
+        visualize_claim_comparisons(result['claim_comparisons'])
+        visualize_level_divergences(result['level_divergences'])
+        
+        return True
+    except Exception as e:
+        print(f"❌ Visualization demo error: {str(e)}")
+        return False
+
 if __name__ == "__main__":
     print("Enhanced Medical Comparative Reasoning Framework v3.0")
     print("=" * 80)
@@ -135,19 +183,46 @@ if __name__ == "__main__":
     # Demo the enhanced features
     demo_enhanced_features()
     
-    # Run a simple test first
-    print(f"\n🧪 Running Simple Test...")
-    if simple_test():
-        print(f"\n🧪 Running Comprehensive Test...")
-        result = test_enhanced_comparative_reasoning()
-        
-        if result:
-            print(f"\n✅ Framework completed successfully!")
-            print(f"Selected Answer: {result['answer']} with confidence {result['confidence']:.2f}")
-            print(f"Check detailed analysis above.")
+    # Ask user for preference
+    print(f"\n🧪 Choose test mode:")
+    print("1. Simple Test (quick validation)")
+    print("2. Visualization Demo (show new features)")
+    print("3. Standard Test (comprehensive but focused)")
+    print("4. Complete Analysis (full detailed output)")
+    
+    # For automatic execution, use comprehensive test
+    mode = "4"  # Change this to test different modes
+    
+    if mode == "1":
+        print(f"\n🧪 Running Simple Test...")
+        if simple_test():
+            print(f"\n✅ Simple test completed successfully!")
         else:
-            print(f"\n❌ Framework encountered an error.")
-    else:
-        print(f"\n❌ Simple test failed. Check configuration.")
+            print(f"\n❌ Simple test failed.")
+    
+    elif mode == "2":
+        print(f"\n🧪 Running Visualization Demo...")
+        if test_visualization_demo():
+            print(f"\n✅ Visualization demo completed successfully!")
+        else:
+            print(f"\n❌ Visualization demo failed.")
+    
+    elif mode == "3":
+        print(f"\n🧪 Running Standard Test...")
+        result = test_enhanced_comparative_reasoning(detailed=False)
+        if result:
+            print(f"\n✅ Standard test completed successfully!")
+            print(f"Selected Answer: {result['answer']} with confidence {result['confidence']:.2f}")
+        else:
+            print(f"\n❌ Standard test failed.")
+    
+    elif mode == "4":
+        print(f"\n🧪 Running Complete Analysis...")
+        result = test_enhanced_comparative_reasoning(detailed=True)
+        if result:
+            print(f"\n✅ Complete analysis finished successfully!")
+            print(f"Final Answer: {result['answer']} (Confidence: {result['confidence']:.2f})")
+        else:
+            print(f"\n❌ Complete analysis failed.")
     
     print(f"\n🎉 Testing complete!") 
