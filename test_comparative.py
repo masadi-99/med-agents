@@ -1,22 +1,15 @@
 """
-Test script for Enhanced Comparative Reasoning Framework
+Test script for Enhanced Comparative Reasoning Framework v3.0
 """
 
 import dspy
 from config import OPENAI_API_KEY
 from medical_reasoning import (
     EnhancedComparativeReasoningSolver,
-    ComparativeReasoningSolver,  # Keep original for comparison
     visualize_enhanced_option_trees,
     visualize_level_divergences,
     visualize_structured_resolutions,
-    visualize_enhanced_comparative_summary,
-    # Legacy visualization functions for comparison
-    visualize_option_trees,
-    visualize_claim_matches,
-    visualize_conflicts,
-    visualize_conflict_resolutions,
-    visualize_comparative_summary
+    visualize_enhanced_comparative_summary
 )
 
 def test_enhanced_comparative_reasoning():
@@ -32,45 +25,39 @@ def test_enhanced_comparative_reasoning():
     dspy.configure(lm=lm)
     
     # Create enhanced comparative solver instance
-    enhanced_solver = EnhancedComparativeReasoningSolver()
+    solver = EnhancedComparativeReasoningSolver()
     
-    # Test question - Pregnant woman with ASD
-    question = """A 22-year-old woman from a rural area who recently discovered she was pregnant is referred for a cardiology consultation due to cyanosis, dyspnea, and a cardiac murmur revealed at the initial prenatal visit. She is gravida 1, para 0 with an estimated gestational age of 19 weeks. She says that the murmur was found in her childhood, and the doctor at that time placed her under observation only. However, she has been lost to follow-up and has not had proper follow up in years. Currently, she complains of dizziness and occasional dyspnea on exertion which has gradually increased during her pregnancy. Prior to her pregnancy, she did not have any symptoms. The vital signs are as follows: blood pressure 125/60 mm Hg, heart rate 81/min, respiratory rate 13/min, and temperature 36.7°C (98.0°F). Her examination is significant for acrocyanosis and a fixed splitting of S2 and grade 3/6 midsystolic murmur best heard over the left upper sternal border. Which of the following physiological pregnancy changes is causing the change in this patient's condition?"""
+    # Test question: Heart failure with atrial septal defect
+    question = """
+    A 35-year-old patient with a known large atrial septal defect (ASD) presents with increasing shortness of breath and fatigue over the past 6 months. Physical examination reveals elevated jugular venous pressure, a systolic murmur, and mild peripheral edema. Echocardiography shows dilated right heart chambers with preserved left ventricular function. What is the most likely acute physiological change responsible for the patient's recent clinical deterioration?
+    """
     
     options = {
-        'A': 'Increase in heart rate',
-        'B': 'Decrease in systemic vascular resistance',
-        'C': 'Increase in cardiac output',
-        'D': 'Increase in blood volume'
+        "A": "Increase in heart rate",
+        "B": "Increase in systemic vascular resistance", 
+        "C": "Increase in cardiac output",
+        "D": "Increase in blood volume",
+        "E": "Increase in myocardial contractility"
     }
-    
-    print("Enhanced Comparative Reasoning Framework Test")
-    print("=" * 80)
-    print(f"Question: {question[:200]}...\n")
-    
-    print("Options:")
-    for key, value in options.items():
-        print(f"  {key}: {value}")
-    print()
     
     try:
         # Get enhanced comparative analysis
-        enhanced_result = enhanced_solver(question=question, options=options)
+        result = solver(question=question, options=options)
         
         # Enhanced Visualizations
         print("\n" + "="*80)
-        print("ENHANCED COMPARATIVE REASONING RESULTS")
+        print("ENHANCED COMPARATIVE REASONING ANALYSIS")
         print("="*80)
         
-        visualize_enhanced_comparative_summary(enhanced_result)
+        visualize_enhanced_comparative_summary(result)
         
-        visualize_enhanced_option_trees(enhanced_result['option_trees'], enhanced_result['option_analyses'])
+        visualize_enhanced_option_trees(result['option_trees'], result['option_analyses'])
         
-        visualize_level_divergences(enhanced_result['level_divergences'])
+        visualize_level_divergences(result['level_divergences'])
         
-        visualize_structured_resolutions(enhanced_result['divergence_resolutions'], enhanced_result['level_scores'])
+        visualize_structured_resolutions(result['divergence_resolutions'], result['level_scores'])
         
-        return enhanced_result
+        return result
         
     except Exception as e:
         print(f"❌ Error during enhanced comparative reasoning: {str(e)}")
@@ -78,8 +65,37 @@ def test_enhanced_comparative_reasoning():
         traceback.print_exc()
         return None
 
-def compare_frameworks():
-    """Compare the original and enhanced comparative frameworks."""
+def demo_enhanced_features():
+    """Demonstrate the key features of the enhanced framework."""
+    print("🎯 ENHANCED COMPARATIVE REASONING FRAMEWORK v3.0")
+    print("=" * 60)
+    print()
+    print("🔑 Key Features:")
+    print("  ✨ Pairwise Claim Matching - More precise than global matching")
+    print("  📊 Level-Based Divergence Analysis - Structured by reasoning hierarchy")
+    print("  ⚖️ Weighted Scoring System - Level-aware importance weighting")
+    print("  🎨 Enhanced Visualization - Clear structured display")
+    print("  🧠 Structured Judgment - Context-aware divergence resolution")
+    print()
+    print("🏗️ Framework Architecture:")
+    print("  1️⃣ Option-Specific Analysis - Generate separate trees for each option")
+    print("  2️⃣ Hierarchical Claim Decomposition - 5-level structured reasoning")
+    print("  3️⃣ Pairwise Claim Matching - Compare claims across options")
+    print("  4️⃣ Level-Based Divergence Detection - Find conflicts by hierarchy")
+    print("  5️⃣ Structured Judgment - Resolve divergences with level weighting")
+    print("  6️⃣ Final Answer Selection - Comprehensive decision making")
+    print()
+    print("📈 Improvements over Original:")
+    print("  • Better claim matching accuracy")
+    print("  • Hierarchy-aware conflict resolution")
+    print("  • Weighted scoring by reasoning level")
+    print("  • More transparent decision process")
+    print("  • Reduced complexity and better focus")
+
+def simple_test():
+    """Run a simple test with minimal output."""
+    print("🧪 SIMPLE TEST - Enhanced Comparative Reasoning")
+    print("-" * 50)
     
     # Configure DSPy
     lm = dspy.LM(
@@ -90,144 +106,48 @@ def compare_frameworks():
     )
     dspy.configure(lm=lm)
     
-    # Test question
-    question = """A 22-year-old woman from a rural area who recently discovered she was pregnant is referred for a cardiology consultation due to cyanosis, dyspnea, and a cardiac murmur revealed at the initial prenatal visit. She is gravida 1, para 0 with an estimated gestational age of 19 weeks. She says that the murmur was found in her childhood, and the doctor at that time placed her under observation only. However, she has been lost to follow-up and has not had proper follow up in years. Currently, she complains of dizziness and occasional dyspnea on exertion which has gradually increased during her pregnancy. Prior to her pregnancy, she did not have any symptoms. The vital signs are as follows: blood pressure 125/60 mm Hg, heart rate 81/min, respiratory rate 13/min, and temperature 36.7°C (98.0°F). Her examination is significant for acrocyanosis and a fixed splitting of S2 and grade 3/6 midsystolic murmur best heard over the left upper sternal border. Which of the following physiological pregnancy changes is causing the change in this patient's condition?"""
+    solver = EnhancedComparativeReasoningSolver()
     
+    question = "A patient with shortness of breath has elevated heart rate. What is the most likely cause?"
     options = {
-        'A': 'Increase in heart rate',
-        'B': 'Decrease in systemic vascular resistance',
-        'C': 'Increase in cardiac output',
-        'D': 'Increase in blood volume'
+        "A": "Heart failure",
+        "B": "Anxiety", 
+        "C": "Hyperthyroidism",
+        "D": "Anemia"
     }
     
-    print("Framework Comparison Test")
-    print("=" * 80)
-    print(f"Question: {question[:150]}...")
-    print(f"Options: {list(options.keys())}")
-    print("\n" + "="*80)
-    
     try:
-        # Test original framework
-        print("🔄 Testing Original Comparative Framework...")
-        original_solver = ComparativeReasoningSolver()
-        original_result = original_solver(question=question, options=options)
-        
-        print("\n📊 ORIGINAL FRAMEWORK RESULTS:")
-        print("-" * 50)
-        print(f"Answer: {original_result['answer']}")
-        print(f"Confidence: {original_result['confidence']:.2f}")
-        print(f"Method: {original_result['reasoning_method']}")
-        print(f"Conflicts Found: {len(original_result.get('conflicts', []))}")
-        
-        # Test enhanced framework
-        print(f"\n🔄 Testing Enhanced Comparative Framework...")
-        enhanced_solver = EnhancedComparativeReasoningSolver()
-        enhanced_result = enhanced_solver(question=question, options=options)
-        
-        print("\n📊 ENHANCED FRAMEWORK RESULTS:")
-        print("-" * 50)
-        print(f"Answer: {enhanced_result['answer']}")
-        print(f"Confidence: {enhanced_result['confidence']:.2f}")
-        print(f"Method: {enhanced_result['reasoning_method']}")
-        print(f"Level Divergences: {sum(len(divs) for divs in enhanced_result['level_divergences'].values())}")
-        print(f"Pairwise Comparisons: {len(enhanced_result['claim_comparisons'])}")
-        
-        # Comparison summary
-        print(f"\n🔍 FRAMEWORK COMPARISON:")
-        print("-" * 50)
-        print(f"Both frameworks selected: {original_result['answer'] == enhanced_result['answer']}")
-        print(f"Confidence difference: {abs(original_result['confidence'] - enhanced_result['confidence']):.2f}")
-        
-        # Feature comparison
-        print(f"\n🆚 FEATURE COMPARISON:")
-        print("-" * 50)
-        print("Original Framework:")
-        print("  ✓ Global claim matching")
-        print("  ✓ Conflict identification")
-        print("  ✓ Binary conflict resolution")
-        
-        print("\nEnhanced Framework:")
-        print("  ✓ Pairwise claim matching")
-        print("  ✓ Level-based divergence analysis")
-        print("  ✓ Structured divergence judgment")
-        print("  ✓ Level-weighted scoring")
-        print("  ✓ Enhanced visualization")
-        
-        return {
-            'original': original_result,
-            'enhanced': enhanced_result,
-            'comparison': {
-                'same_answer': original_result['answer'] == enhanced_result['answer'],
-                'confidence_diff': abs(original_result['confidence'] - enhanced_result['confidence'])
-            }
-        }
-        
+        result = solver(question=question, options=options)
+        print(f"✅ Answer: {result['answer']}")
+        print(f"📊 Confidence: {result['confidence']:.2f}")
+        print(f"🔬 Method: {result['reasoning_method']}")
+        print(f"📈 Claims Generated: {sum(len(claims) for claims in result['option_trees'].values())}")
+        print(f"⚔️ Divergences Found: {sum(len(divs) for divs in result['level_divergences'].values())}")
+        return True
     except Exception as e:
-        print(f"❌ Error during framework comparison: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-def demo_enhanced_features():
-    """Demonstrate the specific enhanced features."""
-    
-    print("\n🎯 ENHANCED COMPARATIVE REASONING FEATURES DEMO")
-    print("=" * 70)
-    
-    print("\n🔍 Key Enhancements from Alternative Model:")
-    print("-" * 50)
-    print("1. ✨ Pairwise Claim Matching")
-    print("   • More precise claim-to-claim comparison")
-    print("   • Similarity classification (IDENTICAL/SIMILAR/RELATED/CONFLICTING/UNRELATED)")
-    print("   • Level-aware matching (only compare same hierarchy levels)")
-    
-    print("\n2. 📊 Level-Based Divergence Analysis")
-    print("   • Structured analysis by reasoning hierarchy")
-    print("   • Level-specific divergence categorization")
-    print("   • Better understanding of where reasoning diverges")
-    
-    print("\n3. ⚖️ Structured Divergence Judgment")
-    print("   • Level-weighted scoring system")
-    print("   • Explicit divergence impact assessment")
-    print("   • More nuanced conflict resolution")
-    
-    print("\n4. 🎨 Enhanced Visualization")
-    print("   • Level-based tree display with status icons")
-    print("   • Hierarchical divergence organization")
-    print("   • Level score breakdown")
-    print("   • Structured resolution analysis")
-    
-    print("\n5. 🏗️ Better Data Structures")
-    print("   • ClaimComparison and DivergencePoint dataclasses")
-    print("   • ClaimSimilarity enum for precise categorization")
-    print("   • Level-aware divergence tracking")
-    
-    print("\n🆚 Improvements Over Original:")
-    print("-" * 50)
-    print("• More systematic claim comparison")
-    print("• Better hierarchy level consideration")
-    print("• Enhanced conflict categorization")
-    print("• Cleaner data organization")
-    print("• More detailed analysis output")
+        print(f"❌ Error: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    print("Testing Enhanced Comparative Reasoning Framework")
+    print("Enhanced Medical Comparative Reasoning Framework v3.0")
     print("=" * 80)
     
     # Demo the enhanced features
     demo_enhanced_features()
     
-    # Test the enhanced framework
-    print(f"\n🧪 Running Enhanced Framework Test...")
-    enhanced_result = test_enhanced_comparative_reasoning()
-    
-    # Compare frameworks if both work
-    if enhanced_result:
-        print(f"\n🔬 Running Framework Comparison...")
-        comparison = compare_frameworks()
+    # Run a simple test first
+    print(f"\n🧪 Running Simple Test...")
+    if simple_test():
+        print(f"\n🧪 Running Comprehensive Test...")
+        result = test_enhanced_comparative_reasoning()
         
-        if comparison:
-            print(f"\n✅ Both frameworks completed successfully!")
-            print(f"Check results above for detailed analysis.")
+        if result:
+            print(f"\n✅ Framework completed successfully!")
+            print(f"Selected Answer: {result['answer']} with confidence {result['confidence']:.2f}")
+            print(f"Check detailed analysis above.")
+        else:
+            print(f"\n❌ Framework encountered an error.")
+    else:
+        print(f"\n❌ Simple test failed. Check configuration.")
     
     print(f"\n🎉 Testing complete!") 
