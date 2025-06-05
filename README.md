@@ -56,7 +56,7 @@ OPENAI_API_KEY = "your-openai-api-key-here"
 
 ### 3. Run the Framework
 ```bash
-python test_comparative.py
+python examples.py
 ```
 
 ## 💻 Usage
@@ -98,18 +98,18 @@ print(f"Efficiency: {result['optimization_stats']['estimated_call_reduction']}")
 
 ## 🧪 Testing
 
-The framework includes comprehensive testing capabilities:
+The framework includes comprehensive demonstration capabilities:
 
 ```bash
-# Run different test modes
-python test_comparative.py
+# Run framework demonstrations
+python examples.py
 
-# Available test modes:
-# 1. Simple Test (quick validation)
-# 2. Visualization Demo (show new features) 
-# 3. Efficiency Analysis (show optimization metrics)
-# 4. Standard Test (comprehensive but focused)
-# 5. Complete Analysis (full detailed output)
+# Available demonstration modes:
+# 1. Simple Test - Quick validation and basic functionality
+# 2. Visualization Demo - Showcase visualization features 
+# 3. Efficiency Analysis - Performance metrics and optimization
+# 4. Standard Analysis - Comprehensive focused analysis
+# 5. Complete Analysis - Full detailed analysis with all features
 ```
 
 ## 🏛️ Framework Components
